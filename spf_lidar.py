@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import csv
 import argparse
+import math
 from ultralytics import YOLO
 from tqdm import tqdm
 import torch
@@ -16,7 +17,7 @@ from pyproj import Transformer
 
 
 # ---------- CONFIG ----------
-FRAME_STRIDE = 1
+FRAME_STRIDE = 4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
 yolo = YOLO("./models/yolo.pt").to(device)
@@ -41,9 +42,10 @@ CAMERA_BASE_TF = 0.55
 
 # Lidar Params
 LIDAR_RANGE = 4.0
-SEMANTIC_RADIUS = 0.5
+SEMANTIC_RADIUS = 1.0
 LIDAR_TO_CAMERA_DX = 0.0  # meters (forward)
 LIDAR_TO_CAMERA_DY = 0.0  # meters (left)
+EXPECTED_OBS_COUNT = 150.0
 
 geojson_path = "data/riseholme_poles_trunk.geojson"
 # Paths for folder-based processing
@@ -372,7 +374,7 @@ def initialize_particles_around_pose(center_pose, std_dev=(PARTICLE_STD, PARTICL
 
 def motion_update(particles, delta_distance, delta_theta, noise_std=(0.1, 0.1, ANGLE_STD)):
     N = len(particles)
-    noise = np.random.normal(0, 0.2, size=(N, 2))
+    noise = np.random.normal(0, 0.1, size=(N, 2))
     noise_angle = np.random.normal(0, ANGLE_STD, size=(N, 1))
 
     for i in range(N):
@@ -391,15 +393,157 @@ def motion_update(particles, delta_distance, delta_theta, noise_std=(0.1, 0.1, A
 
     return particles
 
-def effective_sample_size(weights):
-    return 1.0 / np.sum(weights ** 2)
+def estimate_pose_from_particles(particles, weights, fallback_map_if_multimodal=True):
+    """
+    Returns (x_mean, y_mean, theta_mean) using weighted means and circular mean for theta.
+    If the yaw distribution looks multi-modal (high circular variance), optionally
+    fall back to the MAP particle (highest weight).
+    """
+    w = np.asarray(weights, dtype=np.float64)
+    wsum = w.sum()
+    if wsum <= 0 or not np.isfinite(wsum):
+        w = np.ones(len(particles), dtype=np.float64) / len(particles)
+    else:
+        w = w / wsum
 
-def adaptive_resample(particles, weights, ess_threshold=0.99):
-    ess = effective_sample_size(weights)
-    if ess < ess_threshold * len(particles):
-        idx = np.random.choice(len(particles), size=len(particles), p=weights)
-        return particles[idx]
-    return particles
+    xs = particles[:, 0]
+    ys = particles[:, 1]
+    th = particles[:, 2]
+
+    # Weighted linear means for x,y
+    x_mean = np.sum(w * xs)
+    y_mean = np.sum(w * ys)
+
+    # Weighted circular mean for theta
+    s = np.sum(w * np.sin(th))
+    c = np.sum(w * np.cos(th))
+    theta_mean = np.arctan2(s, c)
+
+    # Circular concentration check (R in [0,1]; low = spread/multimodal)
+    R = np.hypot(s, c)  # resultant length
+    circular_variance = 1.0 - R  # 0=concentrated, ~1=very spread
+
+    if fallback_map_if_multimodal and circular_variance > 0.4:
+        # Pose looks multi-modal -> use MAP particle like AMCL's best-cluster pose
+        idx = int(np.argmax(w))
+        x_mean, y_mean, theta_mean = particles[idx, 0], particles[idx, 1], particles[idx, 2]
+
+    return np.array([x_mean, y_mean, theta_mean])
+
+def adaptive_resample(
+    particles, weights,
+    min_particles=80,            # like amcl/min_particles
+    max_particles=250,          # like amcl/max_particles
+    kld_err=0.07,                # like amcl/kld_err (epsilon)
+    kld_z=0.99,                  # like amcl/kld_z (delta)
+    bin_sizes=(0.5, 0.5, np.deg2rad(10.0)),  # discretization of (x,y,theta)
+    jitter_std=(0.02, 0.02, np.deg2rad(1.0)) # small noise after resample (optional)
+):
+    """
+    KLD-sampling resampler (AMCL-style). Returns a *variable* number of particles.
+    Call remains: particles = adaptive_resample(particles, weights)
+    """
+
+    N, D = particles.shape
+    if N == 0:
+        return particles
+
+    # normalize weights
+    w = np.asarray(weights, dtype=np.float64)
+    s = w.sum()
+    if s <= 0 or not np.isfinite(s):
+        w = np.ones(N, dtype=np.float64) / N
+    else:
+        w /= s
+
+    # helpers --------------------------------------------------------------
+    def _wrap_pi(a):
+        # wrap angle to [-pi, pi)
+        a = (a + np.pi) % (2.0 * np.pi) - np.pi
+        return a
+
+    # Fast inverse normal CDF (Acklam approximation, no SciPy)
+    def _norm_ppf(p: float) -> float:
+        # coefficients from Peter J. Acklam, public domain
+        a = [ -3.969683028665376e+01,  2.209460984245205e+02,
+             -2.759285104469687e+02,  1.383577518672690e+02,
+             -3.066479806614716e+01,  2.506628277459239e+00 ]
+        b = [ -5.447609879822406e+01,  1.615858368580409e+02,
+             -1.556989798598866e+02,  6.680131188771972e+01,
+             -1.328068155288572e+01 ]
+        c = [ -7.784894002430293e-03, -3.223964580411365e-01,
+             -2.400758277161838e+00, -2.549732539343734e+00,
+              4.374664141464968e+00,  2.938163982698783e+00 ]
+        d = [  7.784695709041462e-03,  3.224671290700398e-01,
+              2.445134137142996e+00,  3.754408661907416e+00 ]
+        plow  = 0.02425
+        phigh = 1 - plow
+        if p < plow:
+            q = math.sqrt(-2*math.log(p))
+            return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+                   ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        if p > phigh:
+            q = math.sqrt(-2*math.log(1-p))
+            return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+                     ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        q = p - 0.5
+        r = q*q
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / \
+               (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
+
+    # KLD bound needs z for (1 - delta)
+    z = _norm_ppf(1.0 - kld_z)
+
+    # binning function over (x, y, theta)
+    bx, by, bt = bin_sizes
+    def _bin_key(p):
+        x, y, th = p[0], p[1], _wrap_pi(p[2])
+        return (int(np.floor(x / bx)),
+                int(np.floor(y / by)),
+                int(np.floor(th / bt)))
+
+    # Start drawing via multinomial until bound is satisfied
+    new_particles = []
+    seen_bins = set()
+    k = 0  # number of occupied bins so far
+    required_N = min_particles
+
+    # Precompute CDF for fast sampling
+    cdf = np.cumsum(w)
+    rng = np.random.default_rng()
+
+    def _draw_index():
+        u = rng.random()
+        return int(np.searchsorted(cdf, u, side='right'))
+
+    while len(new_particles) < required_N and len(new_particles) < max_particles:
+        idx = _draw_index()
+        p = particles[idx].copy()
+        # record bin occupancy
+        key = _bin_key(p)
+        if key not in seen_bins:
+            seen_bins.add(key)
+            k = len(seen_bins)
+            if k > 1:
+                # AMCL KLD bound (Fox 2001): 
+                # N >= (k-1)/(2*epsilon) * (1 - 2/(9(k-1)) + sqrt(2/(9(k-1))) * z_{1-delta})^3
+                km1 = k - 1.0
+                term = (1.0 - 2.0/(9.0*km1) + math.sqrt(2.0/(9.0*km1)) * z)
+                required_N = math.ceil((km1 / (2.0 * kld_err)) * (term ** 3))
+                required_N = max(min_particles, required_N)
+
+        new_particles.append(p)
+
+    new_particles = np.asarray(new_particles, dtype=np.float64)
+
+    # Optional small jitter to avoid particle impoverishment
+    if jitter_std is not None:
+        jx, jy, jt = jitter_std
+        new_particles[:, 0] += rng.normal(0.0, jx, size=len(new_particles))
+        new_particles[:, 1] += rng.normal(0.0, jy, size=len(new_particles))
+        new_particles[:, 2] = _wrap_pi(new_particles[:, 2] + rng.normal(0.0, jt, size=len(new_particles)))
+
+    return new_particles
 
 def get_ray_segment_intersection(ray_origin, ray_dir, p1, p2):
     """
@@ -658,8 +802,9 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
       - 'zscore': x' = (x - mean(x)) / (std(x) + eps)
       - None:     no normalization (original scaling)
 
-    Then fuse: log_like' = gps_weight * log_gps' + (1 - gps_weight) * log_semantic'
-    Finally: weights = softmax(log_like'/softmax_temp)
+    Fusion uses a *dynamic* gps_weight based on the number of observations J:
+      gps_weight = 1 / (1 + J / 40), clipped to [0.05, 0.95]
+    Finally: weights = softmax(fused/softmax_temp)
     """
     assert seg_p1 is not None and seg_p2 is not None and seg_v2 is not None and seg_cls is not None, \
         "Provide precomputed segment tensors via build_segment_tensors()."
@@ -715,7 +860,8 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             'correct_hits': 0,
             'incorrect_hits': 0,
             'no_hits': 0,
-            'weight': float(weights[best_idx].item())
+            'weight': float(weights[best_idx].item()),
+            'gps_weight_used': 1.0  # GPS-only
         }
         return weights.detach().cpu().numpy(), stats
 
@@ -723,6 +869,14 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     obs_cls = torch.cat(obs_classes, dim=0)   # (J,)
     J = obs_all.shape[0]
     N = particles.shape[0]
+
+    # ---------------- NEW: dynamic gps_weight from J ----------------
+    # gps_weight = 1 / (1 + J / 40), clipped to [0.05, 0.95]
+
+    gps_weight_t = 1.0 / (1.0 + (J / EXPECTED_OBS_COUNT))
+    gps_weight_t = float(max(0.05, min(0.95, gps_weight_t)))  # keep a Python float for clarity
+    gps_weight_tensor = torch.tensor(gps_weight_t, dtype=torch.float32, device=torch_device)
+    # ----------------------------------------------------------------
 
     # ---- Precompute per-observation constants on GPU ----
     obs_range = torch.linalg.norm(obs_all, dim=1)                  # (J,)
@@ -815,7 +969,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         d_gps = torch.zeros(N, dtype=torch.float32, device=torch_device)
         log_gps = torch.zeros(N, dtype=torch.float32, device=torch_device)
 
-    # ---- NEW: per-frame normalization of log terms (across particles) ----
+    # ---- Per-frame normalization of log terms (across particles) ----
     def robust_norm(x: torch.Tensor) -> torch.Tensor:
         med = torch.median(x)
         mad = torch.median((x - med).abs())
@@ -843,8 +997,8 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         log_sem_n = log_semantic
         log_gps_n = log_gps
 
-    # ---- Fuse & softmax with temperature ----
-    fused = gps_weight * log_gps_n + (1.0 - gps_weight) * log_sem_n  # (N,)
+    # ---- Fuse & softmax with temperature (using dynamic gps_weight) ----
+    fused = gps_weight_tensor * log_gps_n + (1.0 - gps_weight_tensor) * log_sem_n  # (N,)
     logits = fused / max(softmax_temp, 1e-6)
     logits = logits - logits.max()  # stable softmax
     weights = torch.softmax(logits, dim=0)
@@ -863,6 +1017,8 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         'correct_hits': int(correct_hits),
         'incorrect_hits': int(incorrect_hits),
         'no_hits': int(no_hits),
+        'gps_weight_used': float(gps_weight_t),   # <-- report the dynamic weight used
+        'num_observations': int(J)                # <-- for debugging/plots
     }
 
     return weights.detach().cpu().numpy(), stats
@@ -1093,12 +1249,11 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     first_row = df_data.iloc[0]
     init_x = first_row["utm_easting"] - center[0]
     init_y = first_row["utm_northing"] - center[1]
-    #init_theta = INIT_HEADING
-    init_theta = quaternion_to_yaw(first_row['odom_orient_x'],
-                               first_row['odom_orient_y'],
-                               first_row['odom_orient_z'],
-                               first_row['odom_orient_w'])
-    init_theta = init_theta + np.deg2rad(180)
+    init_theta = INIT_HEADING
+    #init_theta = quaternion_to_yaw(first_row['odom_orient_x'],
+    #                           first_row['odom_orient_y'],
+     #                          first_row['odom_orient_z'],
+      #                         first_row['odom_orient_w'])
 
     particles = initialize_particles_around_pose(
         center_pose=(init_x, init_y, init_theta),
@@ -1109,6 +1264,7 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
 
     full_trajectory_data = [] # Will store (timestamp, x, y, theta)
     gps_trajectory = []
+    gps_gt_trajectory = []
     noisy_gps_trajectory = []
     # Initialize odometry state variables
     prev_odom_pos_x, prev_odom_pos_y, prev_odom_yaw = None, None, None
@@ -1378,11 +1534,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             )
         #"""
 
-        est_pose = np.average(particles, axis=0, weights=weights)
+        est_pose = estimate_pose_from_particles(particles, weights)
         
         # Store full pose data for TUM export, using frame_idx as the timestamp
         full_trajectory_data.append((frame_idx, est_pose[0], est_pose[1], est_pose[2]))
-        gps_trajectory.append([gps_x, gps_y])
+        gps_trajectory.append((gps_x, gps_y))
+        gps_gt_trajectory.append((frame_idx, gps_x, gps_y, 0.0))
         noisy_gps_trajectory.append((frame_idx, gps_x_noisy, gps_y_noisy, 0))
         
         particles = adaptive_resample(particles, weights)
@@ -1402,6 +1559,10 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     tum_filename = f"trajectory_{gps_weight}.tum"
     tum_output_path = os.path.join(tum_output_dir, tum_filename)
     save_tum_trajectory(full_trajectory_data, tum_output_path)
+
+    tum_filename = f"gps_pose.tum"
+    tum_output_path = os.path.join(tum_output_dir, tum_filename)
+    save_tum_trajectory(gps_gt_trajectory, tum_output_path)
 
 
 if __name__ == "__main__":
@@ -1424,6 +1585,6 @@ if __name__ == "__main__":
         miss_penalty=args.miss_penalty,
         wrong_hit_penalty=args.wrong_hit_penalty,
         gps_weight=args.gps_weight,
-        output_folder=f"amcl_output/ICRA/spf_lidar/{args.gps_weight}/"
+        output_folder=f"amcl_output/ICRA2/spf_lidar/{args.gps_weight}/"
     )
     print("[INFO] Finished processing all frames from the CSV file.")
