@@ -48,6 +48,12 @@ SEMANTIC_RADIUS = 1.0
 LIDAR_TO_CAMERA_DX = 0.0  # meters (forward)
 LIDAR_TO_CAMERA_DY = 0.0  # meters (left)
 EXPECTED_OBS_COUNT = 150.0
+UPDATE_MIN_D = 0.20  # meters, like amcl/update_min_d
+UPDATE_MIN_A = np.deg2rad(10.0)  # rad, like amcl/update_min_a
+RESAMPLE_INTERVAL = 2  # like amcl/resample_interval
+ESS_RATIO_THRESHOLD = 0.60  # resample if ESS < threshold * N
+POSE_SMOOTH_ALPHA_POS = 0.35
+POSE_SMOOTH_ALPHA_THETA = 0.35
 
 geojson_path = base_dir / "data/riseholme_poles_trunk.geojson"
 # Paths for folder-based processing
@@ -80,6 +86,18 @@ def quaternion_to_yaw(x, y, z, w):
     t4 = +1.0 - 2.0 * (y * y + z * z)
     yaw_z = np.arctan2(t3, t4)
     return yaw_z
+
+def wrap_to_pi(angle):
+    """Normalize angle to [-pi, pi)."""
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+def angle_diff(target, source):
+    """Shortest signed angular difference target-source in [-pi, pi)."""
+    return wrap_to_pi(target - source)
+
+def circular_lerp(source, target, alpha):
+    """Interpolate angles on circle from source to target."""
+    return wrap_to_pi(source + alpha * angle_diff(target, source))
 
 def yaw_to_quaternion(yaw):
     """Converts a yaw angle to a quaternion (qx, qy, qz, qw)."""
@@ -375,25 +393,31 @@ def initialize_particles_around_pose(center_pose, std_dev=(PARTICLE_STD, PARTICL
     return np.stack([x_samples, y_samples, theta_samples], axis=-1)
 
 def motion_update(particles, delta_distance, delta_theta, noise_std=(0.1, 0.1, ANGLE_STD)):
+    # Threshold once per update (not per-particle) to avoid discontinuities.
+    if delta_distance < 1e-3 and abs(delta_theta) < np.deg2rad(0.5):
+        return particles
+
     N = len(particles)
-    noise = np.random.normal(0, 0.1, size=(N, 2))
-    noise_angle = np.random.normal(0, ANGLE_STD, size=(N, 1))
+    noise_x = np.random.normal(0, noise_std[0], size=N)
+    noise_y = np.random.normal(0, noise_std[1], size=N)
+    noise_theta = np.random.normal(0, noise_std[2], size=N)
 
-    for i in range(N):
-        theta = particles[i, 2]
-        if delta_distance < 0.1:
-            delta_distance = 0
-            delta_theta = 0
-        # Forward motion in local frame projected to global map frame
-        dx = delta_distance * np.cos(theta)
-        dy = delta_distance * np.sin(theta)
+    theta = particles[:, 2]
+    dx = delta_distance * np.cos(theta)
+    dy = delta_distance * np.sin(theta)
 
-        # Apply motion + noise
-        particles[i, 0] += dx + noise[i, 0]
-        particles[i, 1] += dy + noise[i, 1]
-        particles[i, 2] += delta_theta + noise_angle[i, 0]
+    particles[:, 0] += dx + noise_x
+    particles[:, 1] += dy + noise_y
+    particles[:, 2] = wrap_to_pi(particles[:, 2] + delta_theta + noise_theta)
 
     return particles
+
+def effective_sample_size(weights):
+    w = np.asarray(weights, dtype=np.float64)
+    sw2 = np.sum(w ** 2)
+    if sw2 <= 0 or not np.isfinite(sw2):
+        return 0.0
+    return 1.0 / sw2
 
 def estimate_pose_from_particles(particles, weights, fallback_map_if_multimodal=True):
     """
@@ -1270,9 +1294,13 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     noisy_gps_trajectory = []
     # Initialize odometry state variables
     prev_odom_pos_x, prev_odom_pos_y, prev_odom_yaw = None, None, None
+    pose_smoothed = None
+    resample_due_counter = 0
 
     stats_fieldnames = ['frame_idx', 'gps_dist', 'log_gps', 'log_semantic', 'correct_hits', 'incorrect_hits', 'no_hits', 'weight']
     CSV_OUTPUT_PATH = os.path.join(output_folder, "stats.csv")
+    seg_p1, seg_p2, seg_v2, seg_cls = build_segment_tensors(grouped_map_points, device=device)
+    weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
     
     # Write the header to the CSV file once at the beginning
     with open(CSV_OUTPUT_PATH, 'w', newline='') as f:
@@ -1471,15 +1499,15 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             row['odom_orient_z'],
             row['odom_orient_w']
         )
-        # If we have a previous state, calculate the change and update particles
-        if prev_odom_pos_x is not None:
+        # If we have a previous state, calculate the change and update particles.
+        had_prev_odom = prev_odom_pos_x is not None
+        delta_distance = 0.0
+        delta_theta = 0.0
+        if had_prev_odom:
             dx_odom = (current_odom_pos_x - prev_odom_pos_x)
             dy_odom = current_odom_pos_y - prev_odom_pos_y
             delta_distance = np.sqrt(dx_odom ** 2 + dy_odom ** 2)
-
-            filtered_odom_yaw = 0.9*current_odom_yaw + 0.1*prev_odom_yaw
-            delta_theta = filtered_odom_yaw - prev_odom_yaw
-            delta_theta = (delta_theta + np.pi) % (2 * np.pi) - np.pi # Normalize angle
+            delta_theta = angle_diff(current_odom_yaw, prev_odom_yaw)
 
             particles = motion_update(particles, delta_distance, delta_theta)
 
@@ -1488,24 +1516,30 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         prev_odom_pos_y = current_odom_pos_y
         prev_odom_yaw = current_odom_yaw
 
-        seg_p1, seg_p2, seg_v2, seg_cls = build_segment_tensors(grouped_map_points, device=device)
-        weights, frame_stats = measurement_likelihood_gpu(
-            grouped_map_points,   # not used (kept for signature parity)
-            bev_poles_obs,
-            bev_trunks_obs,
-            bev_background_obs,
-            particles,            # np.ndarray (N,3)
-            miss_penalty=miss_penalty,
-            wrong_hit_penalty=wrong_hit_penalty,
-            gps_weight=gps_weight,
-            gps_xy=(gps_x_noisy, gps_y_noisy),
-            gps_sigma=GPS_SIGMA,
-            seg_p1=seg_p1, seg_p2=seg_p2, seg_v2=seg_v2, seg_cls=seg_cls,
-            sensor_range=SENSOR_RANGE,
-            class_weights=CLASS_WEIGHTS,
-            device=device,
-            segment_chunk=4096,   # adjust if you have many segments / limited VRAM
+        should_measurement_update = (
+            not had_prev_odom
+            or delta_distance >= UPDATE_MIN_D
+            or abs(delta_theta) >= UPDATE_MIN_A
         )
+        frame_stats = None
+        if should_measurement_update:
+            weights, frame_stats = measurement_likelihood_gpu(
+                grouped_map_points,   # not used (kept for signature parity)
+                bev_poles_obs,
+                bev_trunks_obs,
+                bev_background_obs,
+                particles,            # np.ndarray (N,3)
+                miss_penalty=miss_penalty,
+                wrong_hit_penalty=wrong_hit_penalty,
+                gps_weight=gps_weight,
+                gps_xy=(gps_x_noisy, gps_y_noisy),
+                gps_sigma=GPS_SIGMA,
+                seg_p1=seg_p1, seg_p2=seg_p2, seg_v2=seg_v2, seg_cls=seg_cls,
+                sensor_range=SENSOR_RANGE,
+                class_weights=CLASS_WEIGHTS,
+                device=device,
+                segment_chunk=4096,   # adjust if you have many segments / limited VRAM
+            )
         """ --- Measurement Update ---
         weights, frame_stats = measurement_likelihood(
             grouped_map_points, bev_poles_obs, bev_trunks_obs, bev_background_obs, particles,
@@ -1517,34 +1551,58 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             writer = csv.DictWriter(f, fieldnames=stats_fieldnames)
             writer.writerow(frame_stats)
         """
-        if np.sum(weights) > 0:
-            weights /= np.sum(weights)
+        if should_measurement_update:
+            if np.sum(weights) > 0:
+                weights /= np.sum(weights)
+            else:
+                # Handle case of zero weights, e.g., re-initialize or assign uniform weights
+                weights = np.ones(len(particles), dtype=np.float64) / len(particles)
+
+            #""" Visualize overlap for best particle
+            highest_weight_index = np.argmax(weights)
+            best_particle = particles[highest_weight_index]
+            if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
+                visualize_particle_overlap(
+                    frame_idx, overlay, best_particle,
+                    bev_poles_obs, bev_trunks_obs, bev_background_obs,
+                    grouped_map_points,
+                    output_folder,
+                    sensor_range=SENSOR_RANGE
+                )
+            #"""
+
+            resample_due_counter += 1
+            ess = effective_sample_size(weights)
+            min_ess = ESS_RATIO_THRESHOLD * len(particles)
+            if (resample_due_counter >= RESAMPLE_INTERVAL) and (ess < min_ess):
+                particles = adaptive_resample(particles, weights)
+                weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
+                resample_due_counter = 0
+
+        est_pose_raw = estimate_pose_from_particles(particles, weights)
+        if pose_smoothed is None:
+            pose_smoothed = est_pose_raw.copy()
         else:
-            # Handle case of zero weights, e.g., re-initialize or assign uniform weights
-            weights = np.ones(PARTICLE_COUNT) / PARTICLE_COUNT
-
-        #""" Visualize overlap for best particle
-        highest_weight_index = np.argmax(weights)
-        best_particle = particles[highest_weight_index]
-        if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
-            visualize_particle_overlap(
-                frame_idx, overlay, best_particle,
-                bev_poles_obs, bev_trunks_obs, bev_background_obs,
-                grouped_map_points,
-                output_folder,
-                sensor_range=SENSOR_RANGE
+            pose_smoothed[0] = (
+                (1.0 - POSE_SMOOTH_ALPHA_POS) * pose_smoothed[0]
+                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[0]
             )
-        #"""
+            pose_smoothed[1] = (
+                (1.0 - POSE_SMOOTH_ALPHA_POS) * pose_smoothed[1]
+                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[1]
+            )
+            pose_smoothed[2] = circular_lerp(
+                pose_smoothed[2],
+                est_pose_raw[2],
+                POSE_SMOOTH_ALPHA_THETA
+            )
 
-        est_pose = estimate_pose_from_particles(particles, weights)
-        
         # Store full pose data for TUM export, using frame_idx as the timestamp
-        full_trajectory_data.append((frame_idx, est_pose[0], est_pose[1], est_pose[2]))
+        frame_ts = float(row["timestamp"]) if "timestamp" in row else float(frame_idx)
+        full_trajectory_data.append((frame_ts, pose_smoothed[0], pose_smoothed[1], pose_smoothed[2]))
         gps_trajectory.append((gps_x, gps_y))
-        gps_gt_trajectory.append((frame_idx, gps_x, gps_y, 0.0))
-        noisy_gps_trajectory.append((frame_idx, gps_x_noisy, gps_y_noisy, 0))
-        
-        particles = adaptive_resample(particles, weights)
+        gps_gt_trajectory.append((frame_ts, gps_x, gps_y, 0.0))
+        noisy_gps_trajectory.append((frame_ts, gps_x_noisy, gps_y_noisy, 0))
 
         # Create a simple list of (x, y) for the visualization function
         trajectory_xy = [(t[1], t[2]) for t in full_trajectory_data]
