@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-from pathlib import Path
 import json
-import matplotlib.pyplot as plt
+from pathlib import Path
 import pandas as pd
+import zipfile
+import matplotlib.pyplot as plt
 
 base = Path(__file__).parent.parent
 results = base / 'results'
 
 files = {
-    'SPF': results / 'evo_spf_umey.json',
-    'NoisyGPS': results / 'evo_ngps_umey.json',
-    'AMCL': results / 'evo_amcl_umey.json',
-    'RTAB_RGBD': results / 'evo_rtab_rgbd_umey.json',
-    'RTAB_RGB': results / 'evo_rtab_rgb_umey.json'
+    'SPF': results / 'evo_spf_align_origin.json',
+    'NoisyGPS': results / 'evo_ngps_align_origin.json',
+    'AMCL': results / 'evo_amcl_align_origin.json',
+    'RTAB_RGBD': results / 'evo_rtab_rgbd_align_origin.json',
+    'RTAB_RGB': results / 'evo_rtab_rgb_align_origin.json'
 }
 
 rows = []
 for name, p in files.items():
     if not p.exists():
+        print('Missing', p)
         continue
-    # evo saved a zip archive; open stats.json inside
-    import zipfile
     with zipfile.ZipFile(p, 'r') as z:
         if 'stats.json' in z.namelist():
             with z.open('stats.json') as fh:
@@ -41,18 +41,18 @@ for name, p in files.items():
     })
 
 if not rows:
-    print('No evo umey results found in results/'); raise SystemExit(1)
+    print('No data'); raise SystemExit(1)
 
 df = pd.DataFrame(rows)
-df.to_csv(results / 'evo_umey_summary.csv', index=False)
-print('Wrote', results / 'evo_umey_summary.csv')
+df.to_csv(results / 'evo_align_origin_summary.csv', index=False)
+print('Wrote', results / 'evo_align_origin_summary.csv')
 
-# simple plot
+# plot
 fig, ax = plt.subplots(figsize=(8,4))
 df_sorted = df.dropna(subset=['rmse']).sort_values('rmse')
-ax.bar(df_sorted['method'], df_sorted['rmse'], color='C0')
-ax.set_ylabel('APE RMSE (m) - evo Umeyama')
-ax.set_title('evo APE RMSE after Umeyama alignment')
+ax.bar(df_sorted['method'], df_sorted['rmse'], color='C2')
+ax.set_ylabel('APE RMSE (m) - evo align origin')
+ax.set_title('evo APE RMSE after origin alignment')
 plt.tight_layout()
-plt.savefig(results / 'evo_umey_summary.png', dpi=150)
-print('Wrote', results / 'evo_umey_summary.png')
+plt.savefig(results / 'evo_align_origin_summary.png', dpi=150)
+print('Wrote', results / 'evo_align_origin_summary.png')

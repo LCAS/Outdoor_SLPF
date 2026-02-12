@@ -38,6 +38,15 @@ python scripts/compute_metrics.py
 python scripts/diagnose_spf_vs_gps.py
 ```
 
+4. Run the full evaluation pipeline (metrics + evo + aggregation):
+
+```bash
+source .venv/bin/activate
+python3 scripts/compute_metrics.py
+bash scripts/run_evo_all.sh
+python3 scripts/aggregate_evo_results.py
+```
+
 Repository layout (short)
 ------------------------
 - `data/` — processed trajectory TUM files, GeoJSON maps, and small logs used for evaluation.
@@ -58,6 +67,10 @@ Evaluation notes
 ----------------
 - Metric alignment: scripts support either simple first-pose yaw+translate alignment (useful for visual overlays) or Umeyama 3D similarity alignment — the latter reproduces evo-style similarity APE.
 - For formal APE/RPE evaluation, install `evo` and run its CLI on TUM files to obtain standard metrics.
+
+Documentation
+-------------
+- See the experiment runner and metric definitions for details: `docs/EXPERIMENT_RUNNER_AND_METRICS.md`.
 
 Citation
 --------

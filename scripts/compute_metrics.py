@@ -231,11 +231,14 @@ def main():
             'ground_truth': results_dir / 'spf_lidar' / 'gps_pose.tum'
         },
         'Noisy GPS': {
-            'trajectory': results_dir / 'ngps_only' / 'trajectory_pf.tum',
+            # treat the synthetic noisy GNSS (already in results) as the method trajectory
+            'trajectory': results_dir / 'ngps_only' / 'noisy_gnss.tum',
+            # compare against the common GPS ground truth stored with ngps results
             'ground_truth': results_dir / 'ngps_only' / 'gps_pose.tum'
         },
-        'AMCL+GPS': {
+        'AMCL': {
             'trajectory': results_dir / 'amcl' / 'tum1' / 'amcl_pose.tum',
+            # Compare AMCL against the shared GPS pose file like other methods
             'ground_truth': results_dir / 'amcl' / 'tum1' / 'gps_pose.tum'
         },
         'RTABMap RGBD': {
@@ -255,46 +258,63 @@ def main():
     rows = load_rows_from_geojson(data_dir / 'riseholme_poles_trunk.geojson')
     for label, paths in trajectories.items():
         print(f"Processing {label}...")
-        gt_ts, gt_pos, gt_q = read_tum_file(str(paths['ground_truth']))
+        # handle lidar-only methods with no ground truth specified
+        if paths.get('ground_truth') is None:
+            gt_ts = gt_pos = gt_q = None
+        else:
+            gt_ts, gt_pos, gt_q = read_tum_file(str(paths['ground_truth']))
+
         traj_ts, traj_pos, traj_q = read_tum_file(str(paths['trajectory']))
-        if gt_pos is None or traj_pos is None:
-            print("  Skipping, could not read files.")
+        if traj_pos is None:
+            print("  Skipping, could not read trajectory file.")
+            continue
+        if paths.get('ground_truth') is not None and gt_pos is None:
+            print("  Skipping, could not read ground truth file.")
             continue
 
-        # Interpolate GT to trajectory timestamps
-        gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
+        if gt_pos is not None:
+            # Interpolate GT to trajectory timestamps
+            gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
 
-        # Align trajectory: for RTABMap allow mirroring
-        mirror = True if 'RTABMap' in label else False
-        est_aligned = align_first_pose(traj_pos, traj_q, gt_interp, gt_q, mirror=mirror)
+            # Align trajectory: for RTABMap allow mirroring
+            mirror = True if 'RTABMap' in label else False
+            est_aligned = align_first_pose(traj_pos, traj_q, gt_interp, gt_q, mirror=mirror)
 
-        ate = compute_ate(est_aligned, gt_interp)
-        rte = compute_rte_at_distances(est_aligned, gt_interp, distances)
+            ate = compute_ate(est_aligned, gt_interp)
+            rte = compute_rte_at_distances(est_aligned, gt_interp, distances)
 
-        # Umeyama (similarity) alignment ATE to match evo-style evaluation
-        try:
-            s, R, t = umeyama_alignment(est_aligned, gt_interp, with_scaling=True)
-            est_umey = (s * (R @ est_aligned.T)).T + t
-            ate_umey = compute_ate(est_umey, gt_interp)
-        except Exception:
+            # Umeyama (similarity) alignment ATE to match evo-style evaluation
+            try:
+                s, R, t = umeyama_alignment(est_aligned, gt_interp, with_scaling=True)
+                est_umey = (s * (R @ est_aligned.T)).T + t
+                ate_umey = compute_ate(est_umey, gt_interp)
+            except Exception:
+                ate_umey = {'rmse': None, 'mean': None, 'median': None, 'max': None}
+            # compute RTE on Umeyama-aligned trajectory as well
+            try:
+                rte_umey = compute_rte_at_distances(est_umey, gt_interp, distances)
+            except Exception:
+                rte_umey = {d: {'mean': None, 'rmse': None, 'count': 0} for d in distances}
+        else:
+            # lidar-only method: skip GT-based metrics
+            gt_interp = None
+            est_aligned = None
+            ate = {'rmse': None, 'mean': None, 'median': None, 'max': None}
+            rte = {d: {'mean': None, 'rmse': None, 'count': 0} for d in distances}
             ate_umey = {'rmse': None, 'mean': None, 'median': None, 'max': None}
-        # compute RTE on Umeyama-aligned trajectory as well
-        try:
-            rte_umey = compute_rte_at_distances(est_umey, gt_interp, distances)
-        except Exception:
             rte_umey = {d: {'mean': None, 'rmse': None, 'count': 0} for d in distances}
 
         # Row-based metrics: cross-track error, row correctness, wrong-row events
         cross_track_errs = []
         est_rows = []
         gt_rows = []
-        n = len(gt_interp)
-        for i in range(n):
-            gt_pt = gt_interp[i, :2]
-            est_pt = est_aligned[i, :2]
-            # nearest row for GT and estimator
-            gt_row, gt_row_dist = (None, None)
-            if rows:
+        if gt_interp is not None and rows:
+            n = len(gt_interp)
+            for i in range(n):
+                gt_pt = gt_interp[i, :2]
+                est_pt = est_aligned[i, :2]
+                # nearest row for GT and estimator
+                gt_row, gt_row_dist = (None, None)
                 gt_row, _ = nearest_row_and_distance(gt_pt, rows)
                 est_row, est_row_dist = nearest_row_and_distance(est_pt, rows)
                 gt_rows.append(gt_row)
@@ -312,27 +332,27 @@ def main():
                 else:
                     # fallback to distance to nearest row
                     cross_track_errs.append(est_row_dist)
-            else:
-                gt_rows.append(None)
-                est_rows.append(None)
-                cross_track_errs.append(None)
 
-        # summarize row metrics
-        if rows and cross_track_errs:
-            ct_arr = np.array([c for c in cross_track_errs if c is not None])
-            ct_mean = float(ct_arr.mean())
-            ct_median = float(np.median(ct_arr))
-            ct_max = float(ct_arr.max())
-            # row correctness fraction
-            matches = [1 if (e == g and e is not None) else 0 for e, g in zip(est_rows, gt_rows)]
-            row_correct_frac = float(np.mean(matches)) if matches else None
-            # wrong-row events: count entries into wrong state
-            wrong = [1 if (e != g and e is not None and g is not None) else 0 for e, g in zip(est_rows, gt_rows)]
-            switches = 0
-            for idx_w in range(len(wrong)):
-                if wrong[idx_w] and (idx_w == 0 or not wrong[idx_w - 1]):
-                    switches += 1
-            row_switch_events = int(switches)
+            # summarize row metrics
+            if cross_track_errs:
+                ct_arr = np.array([c for c in cross_track_errs if c is not None])
+                ct_mean = float(ct_arr.mean())
+                ct_median = float(np.median(ct_arr))
+                ct_max = float(ct_arr.max())
+                # row correctness fraction
+                matches = [1 if (e == g and e is not None) else 0 for e, g in zip(est_rows, gt_rows)]
+                row_correct_frac = float(np.mean(matches)) if matches else None
+                # wrong-row events: count entries into wrong state
+                wrong = [1 if (e != g and e is not None and g is not None) else 0 for e, g in zip(est_rows, gt_rows)]
+                switches = 0
+                for idx_w in range(len(wrong)):
+                    if wrong[idx_w] and (idx_w == 0 or not wrong[idx_w - 1]):
+                        switches += 1
+                row_switch_events = int(switches)
+            else:
+                ct_mean = ct_median = ct_max = None
+                row_correct_frac = None
+                row_switch_events = 0
         else:
             ct_mean = ct_median = ct_max = None
             row_correct_frac = None
@@ -370,13 +390,16 @@ def main():
 
         out_rows.append(row)
 
-        print(f"  ATE RMSE: {row['ate_rmse']:.4f} m | mean: {row['ate_mean']:.4f} m | max: {row['ate_max']:.4f} m")
-        for d in distances:
-            r = rte[d]
-            if r['count']:
-                print(f"  RTE @ {int(d)}m -> mean: {r['mean']:.4f} m, rmse: {r['rmse']:.4f} m, pairs: {r['count']}")
-            else:
-                print(f"  RTE @ {int(d)}m -> no pairs found")
+        if row['ate_rmse'] is not None:
+            print(f"  ATE RMSE: {row['ate_rmse']:.4f} m | mean: {row['ate_mean']:.4f} m | max: {row['ate_max']:.4f} m")
+            for d in distances:
+                r = rte[d]
+                if r['count']:
+                    print(f"  RTE @ {int(d)}m -> mean: {r['mean']:.4f} m, rmse: {r['rmse']:.4f} m, pairs: {r['count']}")
+                else:
+                    print(f"  RTE @ {int(d)}m -> no pairs found")
+        else:
+            print("  Note: lidar-only method; skipping GT-based metrics.")
 
     # Write CSV
     if out_rows:

@@ -3,6 +3,20 @@
         "/^/Users/rpolvara/projects/Outdoor_SLPF/\\.venv/bin/python plot_trajectories\\.py$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^\\.venv/bin/python scripts/compute_metrics\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        ".venv/bin/python": true,
+        ".venv/bin/evo_ape": true,
+        "/^file results/evo_spf_umey\\.json && head -c 120 results/evo_spf_umey\\.json \\| xxd -g 1 -l 120$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^unzip -l results/evo_spf_umey\\.json$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

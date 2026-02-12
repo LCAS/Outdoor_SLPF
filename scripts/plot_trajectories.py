@@ -192,7 +192,7 @@ def load_landmark_points(geojson_path, target_crs='epsg:32630'):
     }
 
 
-def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions, errors, label, landmark_points=None, cmap='viridis', vmin=None, vmax=None):
+def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions=None, errors=None, label=None, landmark_points=None, cmap='viridis', vmin=None, vmax=None):
     """
     Plot a trajectory with colors representing errors, overlay its GPS ground truth path,
     and optionally add mapped landmarks.
@@ -207,13 +207,19 @@ def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions, errors, 
     
     lc = LineCollection(segments, cmap=cmap, norm=norm, linewidths=2)
     if len(points) > 1:
-        lc.set_array(errors[:-1])
-        ax.add_collection(lc)
+        if errors is not None:
+            lc.set_array(errors[:-1])
+            ax.add_collection(lc)
+        else:
+            ax.plot(points[:, 0], points[:, 1], linestyle='-', color='tab:blue')
     else:
         ax.plot(points[:, 0], points[:, 1], linestyle='-', color='tab:blue')
 
-    gt_xy = gt_positions[:, :2]
-    ax.plot(gt_xy[:, 0], gt_xy[:, 1], color='gray', linestyle='--', linewidth=1.5, label='GPS ground truth')
+    if gt_positions is not None:
+        gt_xy = gt_positions[:, :2]
+        ax.plot(gt_xy[:, 0], gt_xy[:, 1], color='gray', linestyle='--', linewidth=1.5, label='GPS ground truth')
+    else:
+        gt_xy = np.empty((0, 2))
 
     extra_points = []
     if landmark_points is not None:
@@ -239,10 +245,13 @@ def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions, errors, 
             extra_points.append(seg_trunk.reshape(-1, 2))
 
     extra_mat = np.vstack(extra_points) if extra_points else None
+    # gather points for axis limits
+    parts = [points]
+    if gt_xy.size:
+        parts.append(gt_xy)
     if extra_mat is not None:
-        all_points = np.vstack((points, gt_xy, extra_mat))
-    else:
-        all_points = np.vstack((points, gt_xy))
+        parts.append(extra_mat)
+    all_points = np.vstack(parts)
     ax.set_xlim(all_points[:, 0].min() - 1, all_points[:, 0].max() + 1)
     ax.set_ylim(all_points[:, 1].min() - 1, all_points[:, 1].max() + 1)
     ax.set_xlabel('X (m)')
@@ -252,7 +261,7 @@ def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions, errors, 
     ax.axis('equal')
     ax.legend()
     
-    if len(points) > 1:
+    if errors is not None and len(points) > 1:
         cbar = plt.colorbar(lc, ax=ax, label='Error (m)')
         return cbar
     return None
@@ -271,11 +280,14 @@ def main():
             'ground_truth': results_dir / 'spf_lidar' / 'gps_pose.tum'
         },
         'Noisy GPS': {
-            'trajectory': results_dir / 'ngps_only' / 'trajectory_pf.tum',
+            # use the synthetic noisy GNSS (already in results) as the method trajectory
+            'trajectory': results_dir / 'ngps_only' / 'noisy_gnss.tum',
+            # compare against the common GPS ground truth stored with ngps results
             'ground_truth': results_dir / 'ngps_only' / 'gps_pose.tum'
         },
-        'AMCL+GPS': {
+        'AMCL': {
             'trajectory': results_dir / 'amcl' / 'tum1' / 'amcl_pose.tum',
+            # Compare AMCL against the shared GPS pose file like other methods
             'ground_truth': results_dir / 'amcl' / 'tum1' / 'gps_pose.tum'
         },
         'RTABMap RGBD': {
@@ -292,11 +304,13 @@ def main():
     for label, paths in trajectories.items():
         print(f"Processing {label}...")
 
-        gt_ts, gt_pos, gt_q = read_tum_file(str(paths['ground_truth']))
+        gt_ts = gt_pos = gt_q = None
+        if paths.get('ground_truth') is not None:
+            gt_ts, gt_pos, gt_q = read_tum_file(str(paths['ground_truth']))
         traj_ts, traj_pos, traj_q = read_tum_file(str(paths['trajectory']))
 
-        if gt_pos is None or traj_pos is None:
-            print(f"  Warning: Could not read files for {label}")
+        if traj_pos is None:
+            print(f"  Warning: Could not read trajectory for {label}")
             continue
 
         # Initial alignment for RTABMap methods
@@ -313,12 +327,15 @@ def main():
                     mirror=True
                 )
 
-        gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
-        errors = compute_errors(traj_pos, gt_interp)
-
-        print(f"  Mean error: {errors.mean():.4f} m")
-        print(f"  Max error: {errors.max():.4f} m")
-        print(f"  Min error: {errors.min():.4f} m")
+        if gt_pos is not None:
+            gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
+            errors = compute_errors(traj_pos, gt_interp)
+            print(f"  Mean error: {errors.mean():.4f} m")
+            print(f"  Max error: {errors.max():.4f} m")
+            print(f"  Min error: {errors.min():.4f} m")
+        else:
+            errors = None
+            print(f"  Note: {label} is lidar-only; skipping GT comparison.")
 
         plot_data.append({
             'label': label,
@@ -337,7 +354,7 @@ def main():
     axes = axes.flatten()
 
     # Define explicit min/max values for row-wise colormaps
-    # Row 1 (indices 0, 1, 2): SPF LiDAR, Noisy GPS, AMCL+GPS
+    # Row 1 (indices 0, 1, 2): SPF LiDAR, Noisy GPS, AMCL
     vmin1, vmax1 = 0.0, 5.0
 
     # Row 2 (indices 3, 4): RTABMap methods
