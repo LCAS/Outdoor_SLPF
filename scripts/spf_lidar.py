@@ -48,12 +48,31 @@ SEMANTIC_RADIUS = 1.0
 LIDAR_TO_CAMERA_DX = 0.0  # meters (forward)
 LIDAR_TO_CAMERA_DY = 0.0  # meters (left)
 EXPECTED_OBS_COUNT = 150.0
-UPDATE_MIN_D = 0.20  # meters, like amcl/update_min_d
-UPDATE_MIN_A = np.deg2rad(10.0)  # rad, like amcl/update_min_a
+UPDATE_MIN_D = 0.10  # meters, like amcl/update_min_d
+UPDATE_MIN_A = np.deg2rad(6.0)  # rad, like amcl/update_min_a
 RESAMPLE_INTERVAL = 2  # like amcl/resample_interval
 ESS_RATIO_THRESHOLD = 0.60  # resample if ESS < threshold * N
-POSE_SMOOTH_ALPHA_POS = 0.35
-POSE_SMOOTH_ALPHA_THETA = 0.35
+POSE_SMOOTH_ALPHA_POS = 0.65
+POSE_SMOOTH_ALPHA_THETA = 0.65
+POSE_MIN_MEAS_GAIN = 0.08
+POSE_MAX_CORR_BASE_M = 0.8
+POSE_MAX_CORR_GAIN = 2.0
+POSE_MAX_CORR_YAW_DEG = 22.0
+DEFAULT_OUTPUT_DIR = base_dir / "results" / "spf_lidar++"
+
+# GNSS degradation model (adapted from degrade_gps_vineyard.py)
+GNSS_NOISE_SEED = 42
+GNSS_SIGMA_W_XY = 1.0
+GNSS_SIGMA_B_XY = 1.0
+GNSS_TAU_S = 30.0
+GNSS_OUTLIER_PROB = 0.005
+GNSS_OUTLIER_SCALE_XY = 4.0
+GNSS_OUTLIER_DOF = 3.0
+GNSS_DROPOUT_RATE_PER_S = 0.0
+GNSS_DROPOUT_MEAN_DUR_S = 2.0
+GNSS_DROPOUT_MODE = "hold"  # keep row count stable for frame-wise fusion
+GPS_INNOVATION_SIGMA = 2.5
+GPS_MIN_WEIGHT_SCALE = 0.05
 
 geojson_path = base_dir / "data/riseholme_poles_trunk.geojson"
 # Paths for folder-based processing
@@ -99,6 +118,21 @@ def circular_lerp(source, target, alpha):
     """Interpolate angles on circle from source to target."""
     return wrap_to_pi(source + alpha * angle_diff(target, source))
 
+def clamp_vector_norm(v, max_norm):
+    """Clamp 2D vector norm to max_norm while preserving direction."""
+    n = float(np.linalg.norm(v))
+    if n <= 1e-12 or n <= max_norm:
+        return v
+    return v * (max_norm / n)
+
+def predict_pose_from_delta(prev_pose, delta_distance, delta_theta):
+    """Propagate pose using odometry delta in the pose heading frame."""
+    pred = np.asarray(prev_pose, dtype=float).copy()
+    pred[0] += float(delta_distance) * np.cos(pred[2])
+    pred[1] += float(delta_distance) * np.sin(pred[2])
+    pred[2] = wrap_to_pi(pred[2] + float(delta_theta))
+    return pred
+
 def yaw_to_quaternion(yaw):
     """Converts a yaw angle to a quaternion (qx, qy, qz, qw)."""
     cy = np.cos(yaw * 0.5)
@@ -130,6 +164,43 @@ def save_tum_trajectory(trajectory_data, output_path):
             qx, qy, qz, qw = yaw_to_quaternion(theta)
             f.write(f"{timestamp} {x} {y} 0.0 {qx} {qy} {qz} {qw}\n")
     print(f"[INFO] Trajectory saved to {output_path}")
+
+def load_tum_xy(tum_path):
+    """
+    Load timestamped XY positions from a TUM trajectory file.
+    Returns:
+      ts: np.ndarray shape (N,)
+      xy: np.ndarray shape (N,2)
+    """
+    rows = []
+    with open(tum_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            try:
+                t = float(parts[0])
+                x = float(parts[1])
+                y = float(parts[2])
+            except ValueError:
+                continue
+            rows.append((t, x, y))
+    if not rows:
+        raise RuntimeError(f"No valid TUM rows found in {tum_path}")
+    arr = np.asarray(rows, dtype=np.float64)
+    return arr[:, 0], arr[:, 1:3]
+
+def interpolate_xy_at_timestamps(src_ts, src_xy, target_ts):
+    """
+    Linear interpolation of XY trajectory at target timestamps.
+    """
+    out = np.zeros((len(target_ts), 2), dtype=np.float64)
+    out[:, 0] = np.interp(target_ts, src_ts, src_xy[:, 0])
+    out[:, 1] = np.interp(target_ts, src_ts, src_xy[:, 1])
+    return out
 
 def load_landmarks_as_lines(path):
     """
@@ -357,7 +428,104 @@ def load_lidar_frame_from_csv(
     }
     return lidar_frame
 
-def load_csv_with_utm(csv_path, noise_std=PARTICLE_STD):
+def build_dropout_mask(t, rng, rate_per_s, mean_dur_s):
+    """
+    Build dropout mask with a burst model:
+    - outage starts with Poisson probability driven by dt
+    - outage duration is exponentially distributed
+    """
+    N = len(t)
+    mask = np.zeros(N, dtype=bool)
+    if N == 0 or rate_per_s <= 0.0 or mean_dur_s <= 0.0:
+        return mask
+
+    dt = np.diff(t, prepend=t[0])
+    dt = np.clip(dt, 1e-3, None)
+
+    i = 0
+    while i < N:
+        p_start = 1.0 - math.exp(-rate_per_s * float(dt[i]))
+        if rng.random() < p_start:
+            dur = rng.exponential(mean_dur_s)
+            t_end = t[i] + dur
+            j = i
+            while j < N and t[j] <= t_end:
+                mask[j] = True
+                j += 1
+            i = j
+        else:
+            i += 1
+    return mask
+
+def apply_vineyard_gps_degradation(df):
+    """
+    Apply realistic GNSS degradation (time-correlated bias + jitter + outliers + dropouts)
+    to UTM coordinates. This keeps frame count unchanged by default (dropout_mode='hold').
+    """
+    rng = np.random.default_rng(GNSS_NOISE_SEED)
+    pos = df[["utm_easting", "utm_northing"]].values.astype(float)
+    N = len(pos)
+    if N == 0:
+        df["utm_easting_noisy"] = df["utm_easting"]
+        df["utm_northing_noisy"] = df["utm_northing"]
+        return df
+
+    if "timestamp" in df.columns:
+        t = df["timestamp"].values.astype(float)
+    else:
+        t = np.arange(N, dtype=float)
+
+    dt = np.diff(t, prepend=t[0])
+    dt = np.clip(dt, 1e-3, None)
+
+    # 1) Time-correlated Gauss-Markov bias
+    b = np.zeros((N, 2), dtype=float)
+    tau = max(GNSS_TAU_S, 1e-3)
+    for k in range(1, N):
+        phi = math.exp(-float(dt[k]) / tau)
+        innov_scale = math.sqrt(max(1.0 - phi * phi, 0.0))
+        b[k] = (
+            phi * b[k - 1]
+            + innov_scale * GNSS_SIGMA_B_XY * rng.standard_normal(2)
+        )
+
+    # 2) Fast white jitter
+    w = rng.standard_normal((N, 2)) * GNSS_SIGMA_W_XY
+
+    # 3) Heavy-tailed outliers
+    out = np.zeros((N, 2), dtype=float)
+    if GNSS_OUTLIER_PROB > 0.0:
+        mask_out = rng.random(N) < GNSS_OUTLIER_PROB
+        if np.any(mask_out):
+            dof = max(GNSS_OUTLIER_DOF, 1.0)
+            out[mask_out] = (
+                rng.standard_t(dof, size=(mask_out.sum(), 2)) * GNSS_OUTLIER_SCALE_XY
+            )
+
+    pos_noisy = pos + b + w + out
+
+    # 4) Optional dropouts
+    dropout_mask = build_dropout_mask(
+        t=t,
+        rng=rng,
+        rate_per_s=GNSS_DROPOUT_RATE_PER_S,
+        mean_dur_s=GNSS_DROPOUT_MEAN_DUR_S
+    )
+    if np.any(dropout_mask):
+        if GNSS_DROPOUT_MODE == "nan":
+            pos_noisy[dropout_mask] = np.nan
+        elif GNSS_DROPOUT_MODE == "hold":
+            for k in range(N):
+                if dropout_mask[k] and k > 0:
+                    pos_noisy[k] = pos_noisy[k - 1]
+        elif GNSS_DROPOUT_MODE != "remove":
+            raise ValueError("GNSS_DROPOUT_MODE must be one of: remove|hold|nan")
+
+    df["utm_easting_noisy"] = pos_noisy[:, 0]
+    df["utm_northing_noisy"] = pos_noisy[:, 1]
+    return df
+
+def load_csv_with_utm(csv_path):
     """
     Loads CSV data, converts lat/lon to UTM coordinates, and adds optional noise.
     """
@@ -365,9 +533,7 @@ def load_csv_with_utm(csv_path, noise_std=PARTICLE_STD):
     # Assumes WGS 84 (EPSG:4326) and UTM zone 30N (EPSG:32630)
     transformer = Transformer.from_crs("epsg:4326", "epsg:32630", always_xy=True)
     df["utm_easting"], df["utm_northing"] = transformer.transform(df["longitude"].values, df["latitude"].values)
-    df["utm_easting_noisy"] = df["utm_easting"] + np.random.normal(0, noise_std, len(df))
-    df["utm_northing_noisy"] = df["utm_northing"] + np.random.normal(0, noise_std, len(df))
-    return df
+    return apply_vineyard_gps_degradation(df)
 
 def initialize_particles(n, extent):
     low = np.array(extent[0])
@@ -419,11 +585,21 @@ def effective_sample_size(weights):
         return 0.0
     return 1.0 / sw2
 
-def estimate_pose_from_particles(particles, weights, fallback_map_if_multimodal=True):
+def estimate_pose_from_particles(
+    particles,
+    weights,
+    prev_pose=None,
+    mode_radius_xy=1.5,
+    mode_radius_theta=np.deg2rad(35.0),
+):
     """
-    Returns (x_mean, y_mean, theta_mean) using weighted means and circular mean for theta.
-    If the yaw distribution looks multi-modal (high circular variance), optionally
-    fall back to the MAP particle (highest weight).
+    Return a continuity-aware pose estimate from particles.
+
+    Strategy:
+    - Compute global weighted mean (x/y + circular yaw mean).
+    - If distribution is spread/multi-modal, choose a local mode around the particle
+      that maximizes (weight * temporal consistency with prev_pose), then average
+      inside that local mode.
     """
     w = np.asarray(weights, dtype=np.float64)
     wsum = w.sum()
@@ -436,25 +612,65 @@ def estimate_pose_from_particles(particles, weights, fallback_map_if_multimodal=
     ys = particles[:, 1]
     th = particles[:, 2]
 
-    # Weighted linear means for x,y
-    x_mean = np.sum(w * xs)
-    y_mean = np.sum(w * ys)
+    # Global weighted mean
+    x_global = float(np.sum(w * xs))
+    y_global = float(np.sum(w * ys))
+    s_global = float(np.sum(w * np.sin(th)))
+    c_global = float(np.sum(w * np.cos(th)))
+    theta_global = float(np.arctan2(s_global, c_global))
+    R_global = float(np.hypot(s_global, c_global))
+    circular_variance = 1.0 - R_global
+    pose_global = np.array([x_global, y_global, theta_global], dtype=float)
 
-    # Weighted circular mean for theta
-    s = np.sum(w * np.sin(th))
-    c = np.sum(w * np.cos(th))
-    theta_mean = np.arctan2(s, c)
+    # Concentrated distribution: global mean is stable.
+    if circular_variance <= 0.30 and prev_pose is None:
+        return pose_global
 
-    # Circular concentration check (R in [0,1]; low = spread/multimodal)
-    R = np.hypot(s, c)  # resultant length
-    circular_variance = 1.0 - R  # 0=concentrated, ~1=very spread
+    # Build temporal score to avoid mode flips when multiple hypotheses exist.
+    if prev_pose is not None:
+        prev_pose = np.asarray(prev_pose, dtype=float)
+        dxy_prev = np.linalg.norm(particles[:, :2] - prev_pose[None, :2], axis=1)
+        dth_prev = np.abs(np.arctan2(np.sin(th - prev_pose[2]), np.cos(th - prev_pose[2])))
+        temporal = np.exp(-0.5 * (dxy_prev / max(mode_radius_xy, 1e-3)) ** 2) * np.exp(
+            -0.5 * (dth_prev / max(mode_radius_theta, 1e-3)) ** 2
+        )
+        mode_score = w * temporal
+    else:
+        mode_score = w
 
-    if fallback_map_if_multimodal and circular_variance > 0.4:
-        # Pose looks multi-modal -> use MAP particle like AMCL's best-cluster pose
-        idx = int(np.argmax(w))
-        x_mean, y_mean, theta_mean = particles[idx, 0], particles[idx, 1], particles[idx, 2]
+    anchor_idx = int(np.argmax(mode_score))
+    anchor = particles[anchor_idx]
 
-    return np.array([x_mean, y_mean, theta_mean])
+    dxy = np.linalg.norm(particles[:, :2] - anchor[None, :2], axis=1)
+    dth = np.abs(np.arctan2(np.sin(th - anchor[2]), np.cos(th - anchor[2])))
+    in_mode = (dxy <= mode_radius_xy) & (dth <= mode_radius_theta)
+
+    # If local mode is too small, return the anchor pose (still continuity-aware).
+    if np.count_nonzero(in_mode) < 4:
+        return anchor.astype(float).copy()
+
+    w_local = w[in_mode]
+    w_local_sum = float(np.sum(w_local))
+    if w_local_sum <= 0 or not np.isfinite(w_local_sum):
+        return anchor.astype(float).copy()
+    w_local /= w_local_sum
+
+    xs_l = xs[in_mode]
+    ys_l = ys[in_mode]
+    th_l = th[in_mode]
+    x_local = float(np.sum(w_local * xs_l))
+    y_local = float(np.sum(w_local * ys_l))
+    s_local = float(np.sum(w_local * np.sin(th_l)))
+    c_local = float(np.sum(w_local * np.cos(th_l)))
+    theta_local = float(np.arctan2(s_local, c_local))
+    pose_local = np.array([x_local, y_local, theta_local], dtype=float)
+
+    # If global estimate is already close to temporal prior, keep it.
+    if prev_pose is not None:
+        dxy_global = float(np.linalg.norm(pose_global[:2] - prev_pose[:2]))
+        if dxy_global <= mode_radius_xy and circular_variance <= 0.40:
+            return pose_global
+    return pose_local
 
 def adaptive_resample(
     particles, weights,
@@ -810,6 +1026,9 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
                                gps_weight,
                                gps_xy=None,
                                gps_sigma=GPS_SIGMA,
+                               gps_ref_xy=None,
+                               gps_innovation_sigma=GPS_INNOVATION_SIGMA,
+                               gps_min_weight_scale=GPS_MIN_WEIGHT_SCALE,
                                *,
                                seg_p1=None, seg_p2=None, seg_v2=None, seg_cls=None,
                                sensor_range=SENSOR_RANGE,
@@ -828,14 +1047,24 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
       - 'zscore': x' = (x - mean(x)) / (std(x) + eps)
       - None:     no normalization (original scaling)
 
-    Fusion uses a *dynamic* gps_weight based on the number of observations J:
-      gps_weight = 1 / (1 + J / 40), clipped to [0.05, 0.95]
-    Finally: weights = softmax(fused/softmax_temp)
+    GPS fusion weight honors the input `gps_weight` and is adaptively scaled down
+    when GPS innovation w.r.t. odometry-predicted pose is large.
     """
     assert seg_p1 is not None and seg_p2 is not None and seg_v2 is not None and seg_cls is not None, \
         "Provide precomputed segment tensors via build_segment_tensors()."
     torch_device = torch.device(device)
     eps = 1e-12
+    gps_weight_base = float(np.clip(gps_weight, 0.0, 1.0))
+
+    gps_innovation = 0.0
+    gps_reliability = 1.0
+    if gps_xy is not None and gps_ref_xy is not None:
+        gps_innovation = float(np.linalg.norm(np.asarray(gps_xy, dtype=float) - np.asarray(gps_ref_xy, dtype=float)))
+        sigma = max(float(gps_innovation_sigma), 1e-6)
+        gps_reliability = float(np.exp(-0.5 * (gps_innovation / sigma) ** 2))
+        gps_reliability = max(float(gps_min_weight_scale), gps_reliability)
+    gps_weight_t = float(np.clip(gps_weight_base * gps_reliability, 0.0, 1.0))
+    gps_weight_tensor = torch.tensor(gps_weight_t, dtype=torch.float32, device=torch_device)
 
     # ---- Pack observations (to torch, on device) ----
     obs_list, obs_classes = [], []
@@ -852,7 +1081,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     if len(obs_list) == 0:
         # GPS-only fallback (vectorized)
         parts = torch.as_tensor(particles[:, :2], dtype=torch.float32, device=torch_device)  # (N,2)
-        if gps_xy is not None:
+        if gps_xy is not None and gps_weight_t > 0.05:
             gps_t = torch.as_tensor(gps_xy, dtype=torch.float32, device=torch_device)
             d = torch.linalg.norm(parts - gps_t, dim=1)
             log_gps = -(d**2) / (2.0 * (gps_sigma**2))
@@ -875,6 +1104,8 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             logits = logits - logits.max()  # stable softmax
             weights = torch.softmax(logits, dim=0)
         else:
+            d = torch.zeros((particles.shape[0],), dtype=torch.float32, device=torch_device)
+            log_gps = torch.zeros((particles.shape[0],), dtype=torch.float32, device=torch_device)
             weights = torch.full((particles.shape[0],), 1.0 / particles.shape[0],
                                  dtype=torch.float32, device=torch_device)
 
@@ -887,7 +1118,10 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             'incorrect_hits': 0,
             'no_hits': 0,
             'weight': float(weights[best_idx].item()),
-            'gps_weight_used': 1.0  # GPS-only
+            'gps_weight_used': float(gps_weight_t),
+            'gps_reliability': float(gps_reliability),
+            'gps_innovation': float(gps_innovation),
+            'num_observations': 0
         }
         return weights.detach().cpu().numpy(), stats
 
@@ -895,14 +1129,6 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     obs_cls = torch.cat(obs_classes, dim=0)   # (J,)
     J = obs_all.shape[0]
     N = particles.shape[0]
-
-    # ---------------- NEW: dynamic gps_weight from J ----------------
-    # gps_weight = 1 / (1 + J / 40), clipped to [0.05, 0.95]
-
-    gps_weight_t = 1.0 / (1.0 + (J / EXPECTED_OBS_COUNT))
-    gps_weight_t = float(max(0.05, min(0.95, gps_weight_t)))  # keep a Python float for clarity
-    gps_weight_tensor = torch.tensor(gps_weight_t, dtype=torch.float32, device=torch_device)
-    # ----------------------------------------------------------------
 
     # ---- Precompute per-observation constants on GPU ----
     obs_range = torch.linalg.norm(obs_all, dim=1)                  # (J,)
@@ -1023,7 +1249,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         log_sem_n = log_semantic
         log_gps_n = log_gps
 
-    # ---- Fuse & softmax with temperature (using dynamic gps_weight) ----
+    # ---- Fuse & softmax with temperature ----
     fused = gps_weight_tensor * log_gps_n + (1.0 - gps_weight_tensor) * log_sem_n  # (N,)
     logits = fused / max(softmax_temp, 1e-6)
     logits = logits - logits.max()  # stable softmax
@@ -1043,8 +1269,10 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         'correct_hits': int(correct_hits),
         'incorrect_hits': int(incorrect_hits),
         'no_hits': int(no_hits),
-        'gps_weight_used': float(gps_weight_t),   # <-- report the dynamic weight used
-        'num_observations': int(J)                # <-- for debugging/plots
+        'gps_weight_used': float(gps_weight_t),
+        'gps_reliability': float(gps_reliability),
+        'gps_innovation': float(gps_innovation),
+        'num_observations': int(J)
     }
 
     return weights.detach().cpu().numpy(), stats
@@ -1259,10 +1487,22 @@ def visualize_particles(grouped_map_points, particles, frame_idx, output_dir, tr
 
 # ---------- MAIN ----------
 def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir, miss_penalty, wrong_hit_penalty, gps_weight,
-                                     output_folder="amcl_output"):
+                                     output_folder=DEFAULT_OUTPUT_DIR, frame_start=0, frame_end=None,
+                                     max_processed_frames=None, save_visualizations=True,
+                                     external_noisy_gps_tum=None):
     os.makedirs(os.path.join(output_folder, "particles"), exist_ok=True)
     df_data = load_csv_with_utm(csv_data_path)
     grouped_map_points, center = load_landmarks_as_lines(geojson_path)
+
+    external_noisy_xy = None
+    if external_noisy_gps_tum:
+        ext_ts, ext_xy = load_tum_xy(external_noisy_gps_tum)
+        if "timestamp" in df_data.columns:
+            target_ts = df_data["timestamp"].values.astype(float)
+        else:
+            target_ts = np.arange(len(df_data), dtype=float)
+        external_noisy_xy = interpolate_xy_at_timestamps(ext_ts, ext_xy, target_ts)
+        print(f"[INFO] Using external noisy GPS trajectory: {external_noisy_gps_tum}")
 
     """ Initialize particles based on landmarks extent
     all_coords = np.vstack([poles_coords, trunks_coords])
@@ -1297,7 +1537,33 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     pose_smoothed = None
     resample_due_counter = 0
 
-    stats_fieldnames = ['frame_idx', 'gps_dist', 'log_gps', 'log_semantic', 'correct_hits', 'incorrect_hits', 'no_hits', 'weight']
+    stats_fieldnames = [
+        'frame_idx',
+        'timestamp',
+        'measurement_update',
+        'particle_count',
+        'ess',
+        'min_ess',
+        'max_weight',
+        'gps_dist',
+        'log_gps',
+        'log_semantic',
+        'correct_hits',
+        'incorrect_hits',
+        'no_hits',
+        'weight',
+        'num_observations',
+        'gps_weight_used',
+        'gps_reliability',
+        'gps_innovation',
+        'pred_meas_jump_raw',
+        'pred_meas_jump_clamped',
+        'pred_meas_yaw_raw_deg',
+        'pred_meas_yaw_clamped_deg',
+        'meas_gain_pos',
+        'meas_gain_theta',
+        'resampled'
+    ]
     CSV_OUTPUT_PATH = os.path.join(output_folder, "stats.csv")
     seg_p1, seg_p2, seg_v2, seg_cls = build_segment_tensors(grouped_map_points, device=device)
     weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
@@ -1309,7 +1575,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
 
     # Main loop over the CSV file rows
     pbar = tqdm(df_data.iterrows(), total=df_data.shape[0], desc="Processing frames")
+    processed_frames = 0
     for frame_idx, row in pbar:
+        if frame_end is not None and frame_idx > frame_end:
+            break
+        if frame_idx < frame_start:
+            continue
         if frame_idx % FRAME_STRIDE != 0:
             continue
         
@@ -1487,8 +1758,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         # Get GPS data for current frame (used for measurement update)
         gps_x = row["utm_easting"] - center[0]
         gps_y = row["utm_northing"] - center[1]
-        gps_x_noisy = row["utm_easting_noisy"] - center[0]
-        gps_y_noisy = row["utm_northing_noisy"] - center[1]
+        if external_noisy_xy is not None:
+            gps_x_noisy = float(external_noisy_xy[frame_idx, 0])
+            gps_y_noisy = float(external_noisy_xy[frame_idx, 1])
+        else:
+            gps_x_noisy = row["utm_easting_noisy"] - center[0]
+            gps_y_noisy = row["utm_northing_noisy"] - center[1]
 
         # Get odometry data for the current frame
         current_odom_pos_x = row['odom_pos_x'] 
@@ -1521,7 +1796,15 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             or delta_distance >= UPDATE_MIN_D
             or abs(delta_theta) >= UPDATE_MIN_A
         )
-        frame_stats = None
+
+        if pose_smoothed is None:
+            predicted_pose = None
+        elif had_prev_odom:
+            predicted_pose = predict_pose_from_delta(pose_smoothed, delta_distance, delta_theta)
+        else:
+            predicted_pose = pose_smoothed.copy()
+
+        frame_stats = {}
         if should_measurement_update:
             weights, frame_stats = measurement_likelihood_gpu(
                 grouped_map_points,   # not used (kept for signature parity)
@@ -1534,6 +1817,9 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
                 gps_weight=gps_weight,
                 gps_xy=(gps_x_noisy, gps_y_noisy),
                 gps_sigma=GPS_SIGMA,
+                gps_ref_xy=(predicted_pose[:2] if predicted_pose is not None else None),
+                gps_innovation_sigma=GPS_INNOVATION_SIGMA,
+                gps_min_weight_scale=GPS_MIN_WEIGHT_SCALE,
                 seg_p1=seg_p1, seg_p2=seg_p2, seg_v2=seg_v2, seg_cls=seg_cls,
                 sensor_range=SENSOR_RANGE,
                 class_weights=CLASS_WEIGHTS,
@@ -1561,7 +1847,7 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             #""" Visualize overlap for best particle
             highest_weight_index = np.argmax(weights)
             best_particle = particles[highest_weight_index]
-            if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
+            if save_visualizations and (bev_poles_obs.size > 0 or bev_trunks_obs.size > 0):
                 visualize_particle_overlap(
                     frame_idx, overlay, best_particle,
                     bev_poles_obs, bev_trunks_obs, bev_background_obs,
@@ -1574,31 +1860,94 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             resample_due_counter += 1
             ess = effective_sample_size(weights)
             min_ess = ESS_RATIO_THRESHOLD * len(particles)
+            resampled = 0
             if (resample_due_counter >= RESAMPLE_INTERVAL) and (ess < min_ess):
                 particles = adaptive_resample(particles, weights)
                 weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
                 resample_due_counter = 0
+                resampled = 1
+        else:
+            ess = effective_sample_size(weights)
+            min_ess = ESS_RATIO_THRESHOLD * len(particles)
+            resampled = 0
 
-        est_pose_raw = estimate_pose_from_particles(particles, weights)
+        est_pose_raw = estimate_pose_from_particles(
+            particles,
+            weights,
+            prev_pose=predicted_pose if predicted_pose is not None else pose_smoothed,
+        )
+
+        pred_meas_jump_raw = 0.0
+        pred_meas_jump_clamped = 0.0
+        pred_meas_yaw_raw_deg = 0.0
+        pred_meas_yaw_clamped_deg = 0.0
+        meas_gain_pos = 0.0
+        meas_gain_theta = 0.0
+
         if pose_smoothed is None:
             pose_smoothed = est_pose_raw.copy()
         else:
-            pose_smoothed[0] = (
-                (1.0 - POSE_SMOOTH_ALPHA_POS) * pose_smoothed[0]
-                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[0]
-            )
-            pose_smoothed[1] = (
-                (1.0 - POSE_SMOOTH_ALPHA_POS) * pose_smoothed[1]
-                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[1]
-            )
-            pose_smoothed[2] = circular_lerp(
-                pose_smoothed[2],
-                est_pose_raw[2],
-                POSE_SMOOTH_ALPHA_THETA
-            )
+            if predicted_pose is None:
+                predicted_pose = pose_smoothed.copy()
+            if should_measurement_update:
+                innovation_xy = est_pose_raw[:2] - predicted_pose[:2]
+                pred_meas_jump_raw = float(np.linalg.norm(innovation_xy))
+                max_corr = float(POSE_MAX_CORR_BASE_M + POSE_MAX_CORR_GAIN * max(delta_distance, 0.0))
+                innovation_xy = clamp_vector_norm(innovation_xy, max_corr)
+                pred_meas_jump_clamped = float(np.linalg.norm(innovation_xy))
+
+                innovation_yaw = float(angle_diff(est_pose_raw[2], predicted_pose[2]))
+                pred_meas_yaw_raw_deg = float(np.rad2deg(abs(innovation_yaw)))
+                max_yaw = float(np.deg2rad(POSE_MAX_CORR_YAW_DEG))
+                innovation_yaw = float(np.clip(innovation_yaw, -max_yaw, max_yaw))
+                pred_meas_yaw_clamped_deg = float(np.rad2deg(abs(innovation_yaw)))
+
+                max_w = float(np.max(weights)) if len(weights) else 0.0
+                uniform_w = 1.0 / max(len(weights), 1)
+                conf = float(np.clip((max_w - uniform_w) / max(0.15 - uniform_w, 1e-6), 0.0, 1.0))
+                meas_gain_pos = float(POSE_MIN_MEAS_GAIN + conf * (POSE_SMOOTH_ALPHA_POS - POSE_MIN_MEAS_GAIN))
+                meas_gain_theta = float(POSE_MIN_MEAS_GAIN + conf * (POSE_SMOOTH_ALPHA_THETA - POSE_MIN_MEAS_GAIN))
+
+                pose_smoothed[0] = predicted_pose[0] + meas_gain_pos * innovation_xy[0]
+                pose_smoothed[1] = predicted_pose[1] + meas_gain_pos * innovation_xy[1]
+                pose_smoothed[2] = wrap_to_pi(predicted_pose[2] + meas_gain_theta * innovation_yaw)
+            else:
+                # If no measurement update happened, keep a pure odometry-propagated pose.
+                pose_smoothed = predicted_pose.copy()
+
+        frame_ts = float(row["timestamp"]) if "timestamp" in row else float(frame_idx)
+        frame_stats_row = {
+            'frame_idx': int(frame_idx),
+            'timestamp': frame_ts,
+            'measurement_update': int(should_measurement_update),
+            'particle_count': int(len(particles)),
+            'ess': float(ess),
+            'min_ess': float(min_ess),
+            'max_weight': float(np.max(weights)) if len(weights) else 0.0,
+            'gps_dist': float(frame_stats.get('gps_dist', 0.0)),
+            'log_gps': float(frame_stats.get('log_gps', 0.0)),
+            'log_semantic': float(frame_stats.get('log_semantic', 0.0)),
+            'correct_hits': int(frame_stats.get('correct_hits', 0)),
+            'incorrect_hits': int(frame_stats.get('incorrect_hits', 0)),
+            'no_hits': int(frame_stats.get('no_hits', 0)),
+            'weight': float(frame_stats.get('weight', 0.0)),
+            'num_observations': int(frame_stats.get('num_observations', 0)),
+            'gps_weight_used': float(frame_stats.get('gps_weight_used', gps_weight)),
+            'gps_reliability': float(frame_stats.get('gps_reliability', 1.0)),
+            'gps_innovation': float(frame_stats.get('gps_innovation', 0.0)),
+            'pred_meas_jump_raw': pred_meas_jump_raw,
+            'pred_meas_jump_clamped': pred_meas_jump_clamped,
+            'pred_meas_yaw_raw_deg': pred_meas_yaw_raw_deg,
+            'pred_meas_yaw_clamped_deg': pred_meas_yaw_clamped_deg,
+            'meas_gain_pos': meas_gain_pos,
+            'meas_gain_theta': meas_gain_theta,
+            'resampled': int(resampled)
+        }
+        with open(CSV_OUTPUT_PATH, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=stats_fieldnames)
+            writer.writerow(frame_stats_row)
 
         # Store full pose data for TUM export, using frame_idx as the timestamp
-        frame_ts = float(row["timestamp"]) if "timestamp" in row else float(frame_idx)
         full_trajectory_data.append((frame_ts, pose_smoothed[0], pose_smoothed[1], pose_smoothed[2]))
         gps_trajectory.append((gps_x, gps_y))
         gps_gt_trajectory.append((frame_ts, gps_x, gps_y, 0.0))
@@ -1607,12 +1956,17 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         # Create a simple list of (x, y) for the visualization function
         trajectory_xy = [(t[1], t[2]) for t in full_trajectory_data]
 
-        visualize_particles(
-            grouped_map_points,
-            particles, frame_idx,
-            output_folder, trajectory_xy, gps_trajectory,
-            rgb_overlay=overlay
-        )
+        if save_visualizations:
+            visualize_particles(
+                grouped_map_points,
+                particles, frame_idx,
+                output_folder, trajectory_xy, gps_trajectory,
+                rgb_overlay=overlay
+            )
+
+        processed_frames += 1
+        if max_processed_frames is not None and processed_frames >= max_processed_frames:
+            break
 
     # --- After loop, save trajectory to TUM file ---
     tum_output_dir = os.path.join(output_folder)
@@ -1633,7 +1987,47 @@ if __name__ == "__main__":
                         help='Penalty value for a ray hitting a map feature of the wrong class.')
     parser.add_argument('--gps-weight', type=float, default=0.5,
                         help='A complementary weight coefficient for the GPS error in the likelihood estimation.')
+    parser.add_argument('--gps-sigma', type=float, default=GPS_SIGMA, help='GPS sigma used in likelihood.')
+    parser.add_argument('--semantic-sigma', type=float, default=SEMANTIC_SIGMA, help='Semantic sigma used in likelihood.')
+    parser.add_argument('--semantic-radius', type=float, default=SEMANTIC_RADIUS, help='Radius for semantic association.')
+    parser.add_argument('--update-min-d', type=float, default=UPDATE_MIN_D, help='Minimum distance before measurement update.')
+    parser.add_argument('--update-min-a-deg', type=float, default=np.rad2deg(UPDATE_MIN_A), help='Minimum yaw change (deg) before measurement update.')
+    parser.add_argument('--ess-ratio-threshold', type=float, default=ESS_RATIO_THRESHOLD, help='ESS ratio threshold for resampling.')
+    parser.add_argument('--resample-interval', type=int, default=RESAMPLE_INTERVAL, help='Minimum measurement updates between resampling checks.')
+    parser.add_argument('--pose-smooth-alpha-pos', type=float, default=POSE_SMOOTH_ALPHA_POS, help='EMA alpha for x/y smoothing.')
+    parser.add_argument('--pose-smooth-alpha-theta', type=float, default=POSE_SMOOTH_ALPHA_THETA, help='EMA alpha for yaw smoothing.')
+    parser.add_argument('--pose-min-meas-gain', type=float, default=POSE_MIN_MEAS_GAIN, help='Minimum gain for measurement correction in temporal filter.')
+    parser.add_argument('--pose-max-corr-m', type=float, default=POSE_MAX_CORR_BASE_M, help='Base max XY correction (m) from measurement to prediction.')
+    parser.add_argument('--pose-max-corr-gain', type=float, default=POSE_MAX_CORR_GAIN, help='Additional XY correction per meter odom motion.')
+    parser.add_argument('--pose-max-corr-yaw-deg', type=float, default=POSE_MAX_CORR_YAW_DEG, help='Max yaw correction (deg) from measurement to prediction.')
+    parser.add_argument('--gps-innovation-sigma', type=float, default=GPS_INNOVATION_SIGMA, help='Innovation sigma (m) for GPS reliability gating.')
+    parser.add_argument('--gps-min-weight-scale', type=float, default=GPS_MIN_WEIGHT_SCALE, help='Lower bound scaling applied to gps_weight during GPS gating.')
+    parser.add_argument('--frame-stride', type=int, default=FRAME_STRIDE, help='Process every Nth frame.')
+    parser.add_argument('--frame-start', type=int, default=0, help='Start frame index (inclusive).')
+    parser.add_argument('--frame-end', type=int, default=None, help='End frame index (inclusive).')
+    parser.add_argument('--max-processed-frames', type=int, default=None, help='Stop after this many processed frames.')
+    parser.add_argument('--external-noisy-gps-tum', type=str, default=None, help='Optional TUM file used as external noisy GPS input (tx/ty interpreted in the centered map frame).')
+    parser.add_argument('--output-folder', type=str, default=None, help='Output folder for run artifacts.')
+    parser.add_argument('--no-visualizations', action='store_true', help='Disable frame visualization outputs for faster tuning runs.')
     args = parser.parse_args()
+
+    # Apply runtime overrides (used by tuning scripts without editing source constants).
+    FRAME_STRIDE = max(1, int(args.frame_stride))
+    GPS_SIGMA = float(args.gps_sigma)
+    SEMANTIC_SIGMA = float(args.semantic_sigma)
+    SEMANTIC_RADIUS = float(args.semantic_radius)
+    UPDATE_MIN_D = float(args.update_min_d)
+    UPDATE_MIN_A = np.deg2rad(float(args.update_min_a_deg))
+    ESS_RATIO_THRESHOLD = float(args.ess_ratio_threshold)
+    RESAMPLE_INTERVAL = max(1, int(args.resample_interval))
+    POSE_SMOOTH_ALPHA_POS = float(args.pose_smooth_alpha_pos)
+    POSE_SMOOTH_ALPHA_THETA = float(args.pose_smooth_alpha_theta)
+    POSE_MIN_MEAS_GAIN = float(args.pose_min_meas_gain)
+    POSE_MAX_CORR_BASE_M = float(args.pose_max_corr_m)
+    POSE_MAX_CORR_GAIN = float(args.pose_max_corr_gain)
+    POSE_MAX_CORR_YAW_DEG = float(args.pose_max_corr_yaw_deg)
+    GPS_INNOVATION_SIGMA = float(args.gps_innovation_sigma)
+    GPS_MIN_WEIGHT_SCALE = float(args.gps_min_weight_scale)
 
     print(f"[INFO] Running with Miss Penalty: {args.miss_penalty}, Wrong Hit Penalty: {args.wrong_hit_penalty}, GPS Weight: {args.gps_weight}")
 
@@ -1645,6 +2039,11 @@ if __name__ == "__main__":
         miss_penalty=args.miss_penalty,
         wrong_hit_penalty=args.wrong_hit_penalty,
         gps_weight=args.gps_weight,
-        output_folder=f"amcl_output/ICRA2/spf_lidar/{args.gps_weight}/"
+        output_folder=args.output_folder if args.output_folder else str(DEFAULT_OUTPUT_DIR / str(args.gps_weight)),
+        frame_start=args.frame_start,
+        frame_end=args.frame_end,
+        max_processed_frames=args.max_processed_frames,
+        save_visualizations=not args.no_visualizations,
+        external_noisy_gps_tum=args.external_noisy_gps_tum
     )
     print("[INFO] Finished processing all frames from the CSV file.")

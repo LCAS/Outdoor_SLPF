@@ -112,6 +112,7 @@ def main():
             # map method_key to human label used in trajectory_metrics.csv
             key_map = {
                 'spf': 'SPF LiDAR',
+                'spfpp': 'SPF++',
                 'ngps': 'Noisy GPS',
                 'amcl': 'AMCL',
                 'rtab_rgbd': 'RTABMap RGBD',
@@ -161,6 +162,7 @@ def main():
             # enrich with row-based metrics if available
             key_map = {
                 'spf': 'SPF LiDAR',
+                'spfpp': 'SPF++',
                 'ngps': 'Noisy GPS',
                 'amcl': 'AMCL',
                 'rtab_rgbd': 'RTABMap RGBD',

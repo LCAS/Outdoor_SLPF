@@ -9,6 +9,7 @@ results = base / 'results'
 # map method names between our CSV and evo files
 method_map = {
     'SPF LiDAR': 'SPF',
+    'SPF++': 'SPF++',
     'Noisy GPS': 'NoisyGPS',
     'AMCL': 'AMCL',
     'RTABMap RGBD': 'RTAB_RGBD',
@@ -26,13 +27,19 @@ for k in list(evo_files.keys()):
 rte_df = pd.read_csv(results / 'trajectory_metrics.csv')
 # build dict method -> rte values
 rte_map = {}
+def first_valid(*vals):
+    for v in vals:
+        if pd.notna(v):
+            return v
+    return None
+
 for _, row in rte_df.iterrows():
     method = row['method']
     rte_map[method] = {
         # prefer Umeyama-aligned RTE columns (consistent with compute_metrics PDF)
-        'rte2': row.get('rte_2m_umey_rmse') or row.get('rte_2m_rmse'),
-        'rte5': row.get('rte_5m_umey_rmse') or row.get('rte_5m_rmse'),
-        'rte10': row.get('rte_10m_umey_rmse') or row.get('rte_10m_rmse'),
+        'rte2': first_valid(row.get('rte_2m_umey_rmse'), row.get('rte_2m_rmse')),
+        'rte5': first_valid(row.get('rte_5m_umey_rmse'), row.get('rte_5m_rmse')),
+        'rte10': first_valid(row.get('rte_10m_umey_rmse'), row.get('rte_10m_rmse')),
         'cross_track_mean': row.get('cross_track_mean'),
         'row_correct_fraction': row.get('row_correct_fraction'),
         'row_switch_events': row.get('row_switch_events')
@@ -59,18 +66,21 @@ for p in results.glob('evo_*json'):
 # keywords to match archives to methods
 keywords = {
     'SPF LiDAR': ['spf', 'spf_lidar'],
+    'SPF++': ['spfpp', 'spf_lidar++', 'spf++'],
     'Noisy GPS': ['ngps', 'noisy', 'noisy_gnss', 'noisy-gps'],
     'AMCL': ['amcl'],
     'RTABMap RGBD': ['rtabmap_rgbd', 'rgbd'],
     'RTABMap RGB': ['rtabmap_rgb', 'rgb']
 }
 
-method_list = ['SPF LiDAR', 'Noisy GPS', 'AMCL', 'RTABMap RGBD', 'RTABMap RGB']
+method_list = ['SPF LiDAR', 'SPF++', 'Noisy GPS', 'AMCL', 'RTABMap RGBD', 'RTABMap RGB']
 
 for method in method_list:
     ate_rmse = None
     # search file_info for matching keywords in info.ref_name or info.est_name or filename
     for p, vals in file_info.items():
+        if '_ape_' not in p.name:
+            continue
         info = vals.get('info') or {}
         stats = vals.get('stats') or {}
         hay = ' '.join([p.name, str(info.get('ref_name','')), str(info.get('est_name','')), info.get('title','')]).lower()

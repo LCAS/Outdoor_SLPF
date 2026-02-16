@@ -1,4 +1,5 @@
 import json
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from pyproj import Transformer
+from scipy.signal import savgol_filter
 
 
 def read_tum_file(filepath):
@@ -55,6 +57,37 @@ def compute_errors(trajectory_positions, gt_positions):
     """
     errors = np.linalg.norm(trajectory_positions - gt_positions, axis=1)
     return errors
+
+
+def _resolve_savgol_window(num_points, desired_window):
+    """Return a valid odd Savitzky-Golay window length for a trajectory size."""
+    if num_points < 5:
+        return 0
+    window = max(5, int(desired_window))
+    max_valid = num_points if num_points % 2 == 1 else num_points - 1
+    window = min(window, max_valid)
+    if window % 2 == 0:
+        window -= 1
+    return window if window >= 5 else 0
+
+
+def smooth_trajectory_for_plot(trajectory_positions, window=17, polyorder=3, passes=1):
+    """Smooth XY trajectory for visualization only; keeps Z untouched."""
+    if trajectory_positions is None:
+        return trajectory_positions
+    if len(trajectory_positions) < 5:
+        return np.copy(trajectory_positions)
+
+    smoothed = np.copy(trajectory_positions)
+    win = _resolve_savgol_window(len(smoothed), window)
+    if win == 0:
+        return smoothed
+
+    order = min(max(1, int(polyorder)), win - 1)
+    for _ in range(max(1, int(passes))):
+        smoothed[:, 0] = savgol_filter(smoothed[:, 0], window_length=win, polyorder=order, mode='interp')
+        smoothed[:, 1] = savgol_filter(smoothed[:, 1], window_length=win, polyorder=order, mode='interp')
+    return smoothed
 
 
 def quaternion_to_yaw(q):
@@ -268,6 +301,15 @@ def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions=None, err
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Plot trajectory comparisons with optional display smoothing.')
+    parser.add_argument('--no-smooth', action='store_true', help='Disable visual smoothing of trajectory polylines.')
+    parser.add_argument('--smooth-window', type=int, default=17, help='Savitzky-Golay window length (odd preferred).')
+    parser.add_argument('--smooth-polyorder', type=int, default=3, help='Savitzky-Golay polynomial order.')
+    parser.add_argument('--smooth-passes', type=int, default=1, help='Number of smoothing passes for display.')
+    args = parser.parse_args()
+
+    smooth_enabled = not args.no_smooth
+
     script_dir = Path(__file__).parent
     base_dir = script_dir.parent
     data_dir = base_dir / 'data'
@@ -278,6 +320,10 @@ def main():
         'SPF LiDAR': {
             'trajectory': results_dir / 'spf_lidar' / 'spf_lidar.tum',
             'ground_truth': results_dir / 'spf_lidar' / 'gps_pose.tum'
+        },
+        'SPF++': {
+            'trajectory': results_dir / 'spf_lidar++' / '0.5' / 'trajectory_0.5.tum',
+            'ground_truth': results_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum'
         },
         'Noisy GPS': {
             # use the synthetic noisy GNSS (already in results) as the method trajectory
@@ -327,9 +373,25 @@ def main():
                     mirror=True
                 )
 
+        traj_pos_raw = np.copy(traj_pos)
+        if smooth_enabled:
+            traj_pos_plot = smooth_trajectory_for_plot(
+                traj_pos_raw,
+                window=args.smooth_window,
+                polyorder=args.smooth_polyorder,
+                passes=args.smooth_passes
+            )
+            disp_mag = np.linalg.norm(traj_pos_plot[:, :2] - traj_pos_raw[:, :2], axis=1)
+            print(
+                f"  Visual smoothing displacement (mean/max): "
+                f"{disp_mag.mean():.3f}/{disp_mag.max():.3f} m"
+            )
+        else:
+            traj_pos_plot = traj_pos_raw
+
         if gt_pos is not None:
             gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
-            errors = compute_errors(traj_pos, gt_interp)
+            errors = compute_errors(traj_pos_raw, gt_interp)
             print(f"  Mean error: {errors.mean():.4f} m")
             print(f"  Max error: {errors.max():.4f} m")
             print(f"  Min error: {errors.min():.4f} m")
@@ -339,7 +401,7 @@ def main():
 
         plot_data.append({
             'label': label,
-            'trajectory': traj_pos,
+            'trajectory': traj_pos_plot,
             'ground_truth': gt_pos,
             'errors': errors
         })
@@ -354,10 +416,10 @@ def main():
     axes = axes.flatten()
 
     # Define explicit min/max values for row-wise colormaps
-    # Row 1 (indices 0, 1, 2): SPF LiDAR, Noisy GPS, AMCL
+    # Row 1 (indices 0, 1, 2): SPF LiDAR, SPF++, Noisy GPS
     vmin1, vmax1 = 0.0, 5.0
 
-    # Row 2 (indices 3, 4): RTABMap methods
+    # Row 2 (indices 3, 4, 5): AMCL + RTABMap methods
     vmin2, vmax2 = 0.0, 40.0
 
     for idx, item in enumerate(plot_data):

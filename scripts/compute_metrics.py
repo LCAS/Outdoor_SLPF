@@ -230,6 +230,10 @@ def main():
             'trajectory': results_dir / 'spf_lidar' / 'spf_lidar.tum',
             'ground_truth': results_dir / 'spf_lidar' / 'gps_pose.tum'
         },
+        'SPF++': {
+            'trajectory': results_dir / 'spf_lidar++' / '0.5' / 'trajectory_0.5.tum',
+            'ground_truth': results_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum'
+        },
         'Noisy GPS': {
             # treat the synthetic noisy GNSS (already in results) as the method trajectory
             'trajectory': results_dir / 'ngps_only' / 'noisy_gnss.tum',

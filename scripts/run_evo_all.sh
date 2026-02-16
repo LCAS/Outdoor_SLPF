@@ -11,6 +11,7 @@ RESULTS="$BASE_DIR/results"
 get_ref() {
     case "$1" in
         spf) echo "$RESULTS/spf_lidar/gps_pose.tum" ;;
+        spfpp) echo "$RESULTS/spf_lidar++/0.5/gps_pose.tum" ;;
         ngps) echo "$RESULTS/ngps_only/gps_pose.tum" ;;
         amcl) echo "$RESULTS/amcl/tum1/gps_pose.tum" ;;
         rtab_rgbd) echo "$RESULTS/rtabmap/rgbd/tum1/gps_pose.tum" ;;
@@ -22,6 +23,7 @@ get_ref() {
 get_est() {
     case "$1" in
         spf) echo "$RESULTS/spf_lidar/spf_lidar.tum" ;;
+        spfpp) echo "$RESULTS/spf_lidar++/0.5/trajectory_0.5.tum" ;;
         ngps) echo "$RESULTS/ngps_only/noisy_gnss.tum" ;;
         amcl) echo "$RESULTS/amcl/tum1/amcl_pose.tum" ;;
         rtab_rgbd) echo "$RESULTS/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum" ;;
@@ -30,7 +32,7 @@ get_est() {
     esac
 }
 
-METHODS=(spf ngps amcl rtab_rgbd rtab_rgb)
+METHODS=(spf spfpp ngps amcl rtab_rgbd rtab_rgb)
 
 if [ -d "$BASE_DIR/.venv" ]; then
     # shellcheck disable=SC1090

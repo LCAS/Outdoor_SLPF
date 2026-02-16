@@ -14,6 +14,9 @@ else
     echo "Warning: virtualenv not found at $VENV. Ensure dependencies are installed and 'evo' is on PATH." >&2
 fi
 
+echo "Running SPF++ localization pipeline..."
+python3 "$BASE_DIR/scripts/spf_lidar.py" --gps-weight 0.5
+
 echo "Running compute_metrics.py..."
 python3 "$BASE_DIR/scripts/compute_metrics.py"
 
