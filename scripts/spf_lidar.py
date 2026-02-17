@@ -59,6 +59,11 @@ BACKGROUND_CLASS_WEIGHT = 0.20
 CORRIDOR_WEIGHT = 0.30
 CORRIDOR_DIST_SIGMA = 1.50
 CORRIDOR_HEADING_SIGMA = 0.35
+SEMANTIC_MODEL = "wall"
+POINT_ANG_SIGMA = 0.08
+POINT_RANGE_SIGMA = 0.35
+POINT_ANG_GATE = 0.20
+POINT_MAX_RANGE_DIFF = 1.5
 
 geojson_path = base_dir / "data/riseholme_poles_trunk.geojson"
 # Paths for folder-based processing
@@ -815,6 +820,29 @@ def build_segment_tensors(grouped_map_points, device='cuda'):
 
     return p1, p2, v2, seg_cls
 
+
+def build_point_tensors(grouped_map_points, device='cuda'):
+    """Convert grouped_map_points to class-specific map point tensors on the target device."""
+    poles, trunks = [], []
+    for _, points_in_row in grouped_map_points.items():
+        for point in points_in_row:
+            if point['class'] == 2:
+                poles.append(point['coords'])
+            elif point['class'] == 4:
+                trunks.append(point['coords'])
+
+    if poles:
+        poles_t = torch.as_tensor(np.asarray(poles, dtype=np.float32), device=device)
+    else:
+        poles_t = torch.empty((0, 2), dtype=torch.float32, device=device)
+
+    if trunks:
+        trunks_t = torch.as_tensor(np.asarray(trunks, dtype=np.float32), device=device)
+    else:
+        trunks_t = torch.empty((0, 2), dtype=torch.float32, device=device)
+
+    return poles_t, trunks_t
+
 def measurement_likelihood_gpu(grouped_map_points_unused,
                                bev_poles_obs,
                                bev_trunks_obs,
@@ -827,6 +855,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
                                gps_sigma=GPS_SIGMA,
                                *,
                                seg_p1=None, seg_p2=None, seg_v2=None, seg_cls=None,
+                               point_poles=None, point_trunks=None,
                                sensor_range=SENSOR_RANGE,
                                class_weights=CLASS_WEIGHTS,
                                device='cuda',
@@ -839,7 +868,17 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
                                background_class_weight=BACKGROUND_CLASS_WEIGHT,
                                corridor_weight=CORRIDOR_WEIGHT,
                                corridor_dist_sigma=CORRIDOR_DIST_SIGMA,
-                               corridor_heading_sigma=CORRIDOR_HEADING_SIGMA):
+                               corridor_heading_sigma=CORRIDOR_HEADING_SIGMA,
+                               disable_gps=False,
+                               disable_semantic=False,
+                               disable_corridor=False,
+                               disable_background=False,
+                               disable_dynamic_gps_weight=False,
+                               semantic_model=SEMANTIC_MODEL,
+                               point_ang_sigma=POINT_ANG_SIGMA,
+                               point_range_sigma=POINT_RANGE_SIGMA,
+                               point_ang_gate=POINT_ANG_GATE,
+                               point_max_range_diff=POINT_MAX_RANGE_DIFF):
     """
     GPU vectorized measurement likelihood with per-frame log-term normalization.
 
@@ -855,8 +894,13 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
 
     Background rays are downsampled to avoid dominating the semantic likelihood.
     """
-    assert seg_p1 is not None and seg_p2 is not None and seg_v2 is not None and seg_cls is not None, \
-        "Provide precomputed segment tensors via build_segment_tensors()."
+    if semantic_model not in ("wall", "point"):
+        raise ValueError(f"Unsupported semantic model: {semantic_model}")
+
+    needs_segments = (semantic_model == "wall") or (not disable_corridor)
+    if needs_segments:
+        assert seg_p1 is not None and seg_p2 is not None and seg_v2 is not None and seg_cls is not None, \
+            "Provide precomputed segment tensors via build_segment_tensors()."
     torch_device = torch.device(device)
     eps = 1e-12
 
@@ -884,6 +928,9 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         if normalize == 'zscore':
             return zscore_norm(x)
         return x
+
+    def wrap_angle(x: torch.Tensor) -> torch.Tensor:
+        return torch.atan2(torch.sin(x), torch.cos(x))
 
     # ---- Particles on GPU ----
     parts_xy = torch.as_tensor(particles[:, :2], dtype=torch.float32, device=torch_device)  # (N,2)
@@ -917,7 +964,12 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         log_heading = -(heading_misalign ** 2) / (2.0 * (heading_sigma ** 2))
         return log_dist + log_heading, nearest_dist, heading_misalign
 
-    log_corridor, corridor_dist, corridor_heading_misalign = compute_corridor_log(parts_xy, parts_th)
+    if disable_corridor:
+        log_corridor = torch.zeros(N, dtype=torch.float32, device=torch_device)
+        corridor_dist = torch.zeros(N, dtype=torch.float32, device=torch_device)
+        corridor_heading_misalign = torch.zeros(N, dtype=torch.float32, device=torch_device)
+    else:
+        log_corridor, corridor_dist, corridor_heading_misalign = compute_corridor_log(parts_xy, parts_th)
 
     # ---- Pack observations (to torch, on device) ----
     obs_list, obs_classes = [], []
@@ -928,7 +980,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     if bev_trunks_obs is not None and bev_trunks_obs.size > 0:
         obs_list.append(torch.as_tensor(bev_trunks_obs, dtype=torch.float32, device=torch_device))
         obs_classes.append(torch.full((bev_trunks_obs.shape[0],), 4, dtype=torch.int64, device=torch_device))
-    if bev_background_obs is not None and bev_background_obs.size > 0:
+    if (not disable_background) and bev_background_obs is not None and bev_background_obs.size > 0:
         bg_obs = np.asarray(bev_background_obs, dtype=np.float32)
         if max_background_obs is not None and max_background_obs > 0 and bg_obs.shape[0] > max_background_obs:
             sample_idx = np.linspace(0, bg_obs.shape[0] - 1, num=int(max_background_obs), dtype=np.int64)
@@ -939,19 +991,25 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             obs_classes.append(torch.full((num_background_used,), 0, dtype=torch.int64, device=torch_device))
 
     if len(obs_list) == 0:
-        # No ray observations: blend GPS with corridor term.
+        # No ray observations: blend available terms.
         d_gps = torch.zeros(N, dtype=torch.float32, device=torch_device)
         log_gps = torch.zeros(N, dtype=torch.float32, device=torch_device)
-        if gps_xy is not None:
+        if (not disable_gps) and gps_xy is not None:
             gps_t = torch.as_tensor(gps_xy, dtype=torch.float32, device=torch_device)
             d_gps = torch.linalg.norm(parts_xy - gps_t, dim=1)
             log_gps = -(d_gps ** 2) / (2.0 * (gps_sigma ** 2))
             gps_weight_t = float(max(0.05, min(0.95, gps_weight)))
             gps_weight_tensor = torch.tensor(gps_weight_t, dtype=torch.float32, device=torch_device)
-            fused = gps_weight_tensor * normalize_term(log_gps) + (1.0 - gps_weight_tensor) * normalize_term(log_corridor)
         else:
             gps_weight_t = 0.0
-            fused = normalize_term(log_corridor)
+            gps_weight_tensor = torch.tensor(0.0, dtype=torch.float32, device=torch_device)
+
+        log_semantic = torch.zeros(N, dtype=torch.float32, device=torch_device)
+        corridor_weight_used = 0.0 if disable_corridor else float(max(0.0, min(1.0, corridor_weight)))
+        non_gps_term = ((1.0 - corridor_weight_used) * normalize_term(log_semantic)) + (
+            corridor_weight_used * normalize_term(log_corridor)
+        )
+        fused = gps_weight_tensor * normalize_term(log_gps) + (1.0 - gps_weight_tensor) * non_gps_term
 
         logits = fused / max(softmax_temp, 1e-6)
         logits = logits - logits.max()  # stable softmax
@@ -970,9 +1028,15 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             'no_hits': 0,
             'weight': float(weights[best_idx].item()),
             'gps_weight_used': float(gps_weight_t),
-            'corridor_weight_used': float(corridor_weight),
+            'corridor_weight_used': float(corridor_weight_used),
             'num_background_used': 0,
-            'num_observations': 0
+            'num_observations': 0,
+            'semantic_model_used': str(semantic_model),
+            'gps_enabled': int(not disable_gps),
+            'semantic_enabled': int(not disable_semantic),
+            'corridor_enabled': int(not disable_corridor),
+            'background_enabled': int(not disable_background),
+            'dynamic_gps_enabled': int(not disable_dynamic_gps_weight),
         }
         return weights.detach().cpu().numpy(), stats
 
@@ -980,58 +1044,23 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     obs_cls = torch.cat(obs_classes, dim=0)   # (J,)
     J = obs_all.shape[0]
 
-    # ---------------- NEW: dynamic gps_weight from J ----------------
-    # gps_weight = 1 / (1 + J / EXPECTED_OBS_COUNT), clipped to [0.05, 0.95]
-
-    gps_weight_t = 1.0 / (1.0 + (J / EXPECTED_OBS_COUNT))
-    gps_weight_t = float(max(0.05, min(0.95, gps_weight_t)))  # keep a Python float for clarity
+    if disable_gps or gps_xy is None:
+        gps_weight_t = 0.0
+    elif disable_dynamic_gps_weight:
+        gps_weight_t = float(max(0.05, min(0.95, gps_weight)))
+    else:
+        gps_weight_t = 1.0 / (1.0 + (J / EXPECTED_OBS_COUNT))
+        gps_weight_t = float(max(0.05, min(0.95, gps_weight_t)))
     gps_weight_tensor = torch.tensor(gps_weight_t, dtype=torch.float32, device=torch_device)
-    # ----------------------------------------------------------------
 
     # ---- Precompute per-observation constants on GPU ----
     obs_range = torch.linalg.norm(obs_all, dim=1)                  # (J,)
     obs_ang_local = torch.atan2(obs_all[:, 0], obs_all[:, 1])      # (J,)
 
-    # ---- Build rays for all (N,J) ----
-    ray_angle_world = parts_th[:, None] + obs_ang_local[None, :]  # (N,J)
-    ray_dir = torch.stack([torch.cos(ray_angle_world), torch.sin(ray_angle_world)], dim=-1)  # (N,J,2)
-    O = parts_xy[:, None, :].expand(-1, J, -1)  # (N,J,2)
-    v3 = torch.stack([-ray_dir[..., 1], ray_dir[..., 0]], dim=-1)  # (N,J,2)
+    sem_sigma = max(float(SEMANTIC_SIGMA), 1e-6)
+    miss_pen = - (miss_penalty**2) / (2.0 * (sem_sigma**2))
+    wrong_pen = - (wrong_hit_penalty**2) / (2.0 * (sem_sigma**2))
 
-    # ---- Intersections in chunks ----
-    closest_hit_range = torch.full((N, J), sensor_range, dtype=torch.float32, device=torch_device)
-    closest_hit_class = torch.full((N, J), -1, dtype=torch.int64, device=torch_device)
-
-    def cross2d(a, b):  # (...,2) x (...,2)
-        return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
-
-    Nseg = seg_p1.shape[0]
-    for start in range(0, Nseg, segment_chunk):
-        end = min(start + segment_chunk, Nseg)
-        p1_chunk = seg_p1[start:end]   # (M,2)
-        v2_chunk = seg_v2[start:end]   # (M,2)
-        cls_chunk = seg_cls[start:end] # (M,)
-
-        v1 = O[:, :, None, :] - p1_chunk[None, None, :, :]                 # (N,J,M,2)
-        denom = (v2_chunk[None, None, :, :] * v3[:, :, None, :]).sum(-1)   # (N,J,M)
-        parallel = denom.abs() < 1e-8
-
-        t1 = cross2d(v2_chunk[None, None, :, :], v1) / (denom + 1e-12)
-        t2 = (v1 * v3[:, :, None, :]).sum(-1) / (denom + 1e-12)
-
-        valid = (~parallel) & (t1 >= 0.0) & (t2 >= 0.0) & (t2 <= 1.0)
-        if not valid.any():
-            continue
-
-        dist = torch.where(valid, t1, torch.full_like(t1, float('inf')))
-        min_dist, min_idx = dist.min(dim=-1)  # (N,J)
-        improved = min_dist < closest_hit_range
-
-        closest_hit_range = torch.where(improved, min_dist, closest_hit_range)
-        new_cls = cls_chunk[min_idx.clamp_min(0)]
-        closest_hit_class = torch.where(improved, new_cls, closest_hit_class)
-
-    # ---- Per-ray contributions ----
     cw = torch.ones(J, dtype=torch.float32, device=torch_device)
     if class_weights:
         for k, v in class_weights.items():
@@ -1040,36 +1069,186 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         cw = torch.where(obs_cls == 0, torch.tensor(float(background_class_weight), device=torch_device), cw)
     cw = cw[None, :]  # (1,J)
 
-    obs_range_b = obs_range[None, :]  # (1,J)
-    any_hit = closest_hit_class >= 0
-    range_err = (obs_range_b - closest_hit_range).abs()
-    reward = -(range_err**2) / (2.0 * (SEMANTIC_SIGMA**2))
-    miss_pen = - (miss_penalty**2) / (2.0 * (SEMANTIC_SIGMA**2))
-    wrong_pen = - (wrong_hit_penalty**2) / (2.0 * (SEMANTIC_SIGMA**2))
+    log_semantic = torch.zeros(N, dtype=torch.float32, device=torch_device)
+    hit_and_match = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+    hit_and_mismatch = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+    miss_sem = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+    hit_bg = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+    miss_bg = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
 
-    is_sem = (obs_cls[None, :] == 2) | (obs_cls[None, :] == 4)
-    hit_and_match = any_hit & is_sem & (closest_hit_class == obs_cls[None, :])
-    hit_and_mismatch = any_hit & is_sem & (closest_hit_class != obs_cls[None, :])
-    miss_sem = (~any_hit) & is_sem
+    if not disable_semantic:
+        if semantic_model == "wall":
+            # ---- Build rays for all (N,J) ----
+            ray_angle_world = parts_th[:, None] + obs_ang_local[None, :]  # (N,J)
+            ray_dir = torch.stack([torch.cos(ray_angle_world), torch.sin(ray_angle_world)], dim=-1)  # (N,J,2)
+            O = parts_xy[:, None, :].expand(-1, J, -1)  # (N,J,2)
+            v3 = torch.stack([-ray_dir[..., 1], ray_dir[..., 0]], dim=-1)  # (N,J,2)
 
-    contrib_sem = torch.zeros((N, J), dtype=torch.float32, device=torch_device)
-    contrib_sem = torch.where(hit_and_match, reward, contrib_sem)
-    contrib_sem = torch.where(hit_and_mismatch, torch.full_like(contrib_sem, wrong_pen), contrib_sem)
-    contrib_sem = torch.where(miss_sem, torch.full_like(contrib_sem, miss_pen), contrib_sem)
+            # ---- Intersections in chunks ----
+            closest_hit_range = torch.full((N, J), sensor_range, dtype=torch.float32, device=torch_device)
+            closest_hit_class = torch.full((N, J), -1, dtype=torch.int64, device=torch_device)
 
-    is_bg = (obs_cls[None, :] == 0)
-    hit_bg = any_hit & is_bg
-    miss_bg = (~any_hit) & is_bg
-    contrib_bg = torch.zeros((N, J), dtype=torch.float32, device=torch_device)
-    contrib_bg = torch.where(hit_bg, reward, contrib_bg)
-    contrib_bg = torch.where(miss_bg, torch.full_like(contrib_bg, miss_pen), contrib_bg)
+            def cross2d(a, b):  # (...,2) x (...,2)
+                return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
-    contrib = torch.where(is_sem, contrib_sem, contrib_bg)
-    contrib = contrib * cw
-    log_semantic = contrib.mean(dim=1)  # (N,)
+            Nseg = seg_p1.shape[0]
+            for start in range(0, Nseg, segment_chunk):
+                end = min(start + segment_chunk, Nseg)
+                p1_chunk = seg_p1[start:end]   # (M,2)
+                v2_chunk = seg_v2[start:end]   # (M,2)
+                cls_chunk = seg_cls[start:end] # (M,)
+
+                v1 = O[:, :, None, :] - p1_chunk[None, None, :, :]                 # (N,J,M,2)
+                denom = (v2_chunk[None, None, :, :] * v3[:, :, None, :]).sum(-1)   # (N,J,M)
+                parallel = denom.abs() < 1e-8
+
+                t1 = cross2d(v2_chunk[None, None, :, :], v1) / (denom + 1e-12)
+                t2 = (v1 * v3[:, :, None, :]).sum(-1) / (denom + 1e-12)
+
+                valid = (~parallel) & (t1 >= 0.0) & (t2 >= 0.0) & (t2 <= 1.0)
+                if not valid.any():
+                    continue
+
+                dist = torch.where(valid, t1, torch.full_like(t1, float('inf')))
+                min_dist, min_idx = dist.min(dim=-1)  # (N,J)
+                improved = min_dist < closest_hit_range
+
+                closest_hit_range = torch.where(improved, min_dist, closest_hit_range)
+                new_cls = cls_chunk[min_idx.clamp_min(0)]
+                closest_hit_class = torch.where(improved, new_cls, closest_hit_class)
+
+            obs_range_b = obs_range[None, :]  # (1,J)
+            any_hit = closest_hit_class >= 0
+            range_err = (obs_range_b - closest_hit_range).abs()
+            reward = -(range_err**2) / (2.0 * (sem_sigma**2))
+
+            is_sem = (obs_cls[None, :] == 2) | (obs_cls[None, :] == 4)
+            hit_and_match = any_hit & is_sem & (closest_hit_class == obs_cls[None, :])
+            hit_and_mismatch = any_hit & is_sem & (closest_hit_class != obs_cls[None, :])
+            miss_sem = (~any_hit) & is_sem
+
+            contrib_sem = torch.zeros((N, J), dtype=torch.float32, device=torch_device)
+            contrib_sem = torch.where(hit_and_match, reward, contrib_sem)
+            contrib_sem = torch.where(hit_and_mismatch, torch.full_like(contrib_sem, wrong_pen), contrib_sem)
+            contrib_sem = torch.where(miss_sem, torch.full_like(contrib_sem, miss_pen), contrib_sem)
+
+            is_bg = (obs_cls[None, :] == 0)
+            hit_bg = any_hit & is_bg
+            miss_bg = (~any_hit) & is_bg
+            contrib_bg = torch.zeros((N, J), dtype=torch.float32, device=torch_device)
+            contrib_bg = torch.where(hit_bg, reward, contrib_bg)
+            contrib_bg = torch.where(miss_bg, torch.full_like(contrib_bg, miss_pen), contrib_bg)
+
+            contrib = torch.where(is_sem, contrib_sem, contrib_bg)
+            contrib = contrib * cw
+            log_semantic = contrib.mean(dim=1)
+        else:
+            # Point-based semantic model: poles/trunks are matched as individual objects.
+            poles = point_poles if point_poles is not None else torch.empty((0, 2), dtype=torch.float32, device=torch_device)
+            trunks = point_trunks if point_trunks is not None else torch.empty((0, 2), dtype=torch.float32, device=torch_device)
+            if poles.device != torch_device:
+                poles = poles.to(torch_device)
+            if trunks.device != torch_device:
+                trunks = trunks.to(torch_device)
+            map_points = torch.cat([poles, trunks], dim=0) if poles.numel() + trunks.numel() > 0 else torch.empty((0, 2), dtype=torch.float32, device=torch_device)
+            map_classes = torch.cat([
+                torch.full((poles.shape[0],), 2, dtype=torch.int64, device=torch_device),
+                torch.full((trunks.shape[0],), 4, dtype=torch.int64, device=torch_device),
+            ], dim=0) if poles.numel() + trunks.numel() > 0 else torch.empty((0,), dtype=torch.int64, device=torch_device)
+
+            sem_obs_mask = (obs_cls == 2) | (obs_cls == 4)
+            bg_obs_mask = (obs_cls == 0)
+            sem_obs_mask_b = sem_obs_mask[None, :]
+            bg_obs_mask_b = bg_obs_mask[None, :]
+
+            pa_sigma = max(float(point_ang_sigma), 1e-6)
+            pr_sigma = max(float(point_range_sigma), 1e-6)
+            ang_gate = max(float(point_ang_gate), 0.0)
+            range_gate = max(float(point_max_range_diff), 0.0)
+            point_miss_pen = - (miss_penalty**2) / (2.0 * (pr_sigma**2))
+            point_wrong_pen = - (wrong_hit_penalty**2) / (2.0 * (pr_sigma**2))
+
+            has_same = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+            has_opp = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+            has_bg_hit = torch.zeros((N, J), dtype=torch.bool, device=torch_device)
+            best_same_score = torch.full((N, J), -float("inf"), dtype=torch.float32, device=torch_device)
+            nearest_bg_range = torch.full((N, J), float("inf"), dtype=torch.float32, device=torch_device)
+
+            if map_points.shape[0] > 0:
+                fwd = torch.stack([torch.cos(parts_th), torch.sin(parts_th)], dim=-1)   # (N,2)
+                left = torch.stack([-torch.sin(parts_th), torch.cos(parts_th)], dim=-1)  # (N,2)
+
+                point_chunk = 1024
+                for start in range(0, map_points.shape[0], point_chunk):
+                    end = min(start + point_chunk, map_points.shape[0])
+                    map_chunk = map_points[start:end]      # (M,2)
+                    cls_chunk = map_classes[start:end]     # (M,)
+
+                    rel = map_chunk[None, :, :] - parts_xy[:, None, :]      # (N,M,2)
+                    r_chunk = torch.linalg.norm(rel, dim=-1).clamp_min(eps)  # (N,M)
+                    local_fwd = torch.sum(rel * fwd[:, None, :], dim=-1)     # (N,M)
+                    local_left = torch.sum(rel * left[:, None, :], dim=-1)   # (N,M)
+                    alpha_chunk = torch.atan2(local_left, local_fwd)          # (N,M)
+
+                    r_chunk_b = r_chunk[:, None, :]  # (N,1,M)
+                    delta_alpha = wrap_angle(alpha_chunk[:, None, :] - obs_ang_local[None, :, None])
+                    delta_r = r_chunk_b - obs_range[None, :, None]
+
+                    candidate = (
+                        (delta_alpha.abs() <= ang_gate)
+                        & (delta_r.abs() <= range_gate)
+                        & (r_chunk_b > 0.0)
+                        & (r_chunk_b <= sensor_range)
+                    )
+
+                    cls_same = cls_chunk[None, None, :] == obs_cls[None, :, None]
+                    same_valid = candidate & sem_obs_mask[None, :, None] & cls_same
+                    opp_valid = candidate & sem_obs_mask[None, :, None] & (~cls_same)
+
+                    score_same = -0.5 * (
+                        (delta_alpha ** 2) / (pa_sigma ** 2)
+                        + (delta_r ** 2) / (pr_sigma ** 2)
+                    )
+                    score_same = torch.where(same_valid, score_same, torch.full_like(score_same, -float("inf")))
+                    chunk_best_same = torch.max(score_same, dim=2).values
+
+                    best_same_score = torch.maximum(best_same_score, chunk_best_same)
+                    has_same |= torch.any(same_valid, dim=2)
+                    has_opp |= torch.any(opp_valid, dim=2)
+
+                    bg_valid = candidate & bg_obs_mask[None, :, None] & (r_chunk_b <= obs_range[None, :, None])
+                    chunk_bg_min = torch.min(
+                        torch.where(bg_valid, r_chunk_b, torch.full_like(r_chunk_b, float("inf"))),
+                        dim=2
+                    ).values
+                    nearest_bg_range = torch.minimum(nearest_bg_range, chunk_bg_min)
+                    has_bg_hit |= torch.any(bg_valid, dim=2)
+
+            sem_contrib = torch.full((N, J), point_miss_pen, dtype=torch.float32, device=torch_device)
+            sem_contrib = torch.where(has_opp, torch.full_like(sem_contrib, point_wrong_pen), sem_contrib)
+            sem_contrib = torch.where(has_same, best_same_score, sem_contrib)
+
+            safe_bg_range = torch.where(has_bg_hit, nearest_bg_range, obs_range[None, :])
+            bg_range_err = (obs_range[None, :] - safe_bg_range).abs()
+            bg_reward = -(bg_range_err ** 2) / (2.0 * (pr_sigma ** 2))
+            bg_contrib = torch.where(
+                has_bg_hit,
+                bg_reward,
+                torch.full_like(bg_reward, point_miss_pen),
+            )
+
+            contrib = torch.where(bg_obs_mask_b, bg_contrib, sem_contrib)
+            contrib = contrib * cw
+            log_semantic = contrib.mean(dim=1)
+
+            hit_and_match = has_same & sem_obs_mask_b
+            hit_and_mismatch = (~has_same) & has_opp & sem_obs_mask_b
+            miss_sem = (~has_same) & (~has_opp) & sem_obs_mask_b
+            hit_bg = has_bg_hit & bg_obs_mask_b
+            miss_bg = (~has_bg_hit) & bg_obs_mask_b
 
     # ---- GPS term ----
-    if gps_xy is not None:
+    if (not disable_gps) and gps_xy is not None:
         gps_t = torch.as_tensor(gps_xy, dtype=torch.float32, device=torch_device)
         d_gps = torch.linalg.norm(parts_xy - gps_t, dim=1)  # (N,)
         log_gps = -(d_gps**2) / (2.0 * (gps_sigma**2))      # (N,)
@@ -1083,7 +1262,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     log_corr_n = normalize_term(log_corridor)
 
     # ---- Fuse & softmax with temperature ----
-    corridor_weight_used = float(max(0.0, min(1.0, corridor_weight)))
+    corridor_weight_used = 0.0 if disable_corridor else float(max(0.0, min(1.0, corridor_weight)))
     non_gps_term = ((1.0 - corridor_weight_used) * log_sem_n) + (corridor_weight_used * log_corr_n)
     fused = gps_weight_tensor * log_gps_n + (1.0 - gps_weight_tensor) * non_gps_term  # (N,)
     logits = fused / max(softmax_temp, 1e-6)
@@ -1110,7 +1289,13 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
         'gps_weight_used': float(gps_weight_t),           # dynamic GPS weight
         'corridor_weight_used': float(corridor_weight_used),
         'num_background_used': int(num_background_used),
-        'num_observations': int(J)
+        'num_observations': int(J),
+        'semantic_model_used': str(semantic_model),
+        'gps_enabled': int(not disable_gps),
+        'semantic_enabled': int(not disable_semantic),
+        'corridor_enabled': int(not disable_corridor),
+        'background_enabled': int(not disable_background),
+        'dynamic_gps_enabled': int(not disable_dynamic_gps_weight),
     }
 
     return weights.detach().cpu().numpy(), stats
@@ -1325,7 +1510,12 @@ def visualize_particles(grouped_map_points, particles, frame_idx, output_dir, tr
 
 # ---------- MAIN ----------
 def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir, miss_penalty, wrong_hit_penalty, gps_weight,
-                                     output_folder="amcl_output"):
+                                     output_folder="amcl_output", max_frames=None, visualize=True,
+                                     disable_gps=False, disable_semantic=False, disable_corridor=False,
+                                     disable_background=False, disable_dynamic_gps_weight=False,
+                                     disable_pose_smoothing=False, semantic_model=SEMANTIC_MODEL,
+                                     point_ang_sigma=POINT_ANG_SIGMA, point_range_sigma=POINT_RANGE_SIGMA,
+                                     point_ang_gate=POINT_ANG_GATE, point_max_range_diff=POINT_MAX_RANGE_DIFF):
     os.makedirs(os.path.join(output_folder, "particles"), exist_ok=True)
     df_data = load_csv_with_utm(csv_data_path)
     grouped_map_points, center = load_landmarks_as_lines(geojson_path)
@@ -1377,10 +1567,18 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         'gps_weight_used',
         'corridor_weight_used',
         'num_background_used',
-        'num_observations'
+        'num_observations',
+        'semantic_model_used',
+        'gps_enabled',
+        'semantic_enabled',
+        'corridor_enabled',
+        'background_enabled',
+        'dynamic_gps_enabled',
+        'pose_smoothing_enabled',
     ]
     CSV_OUTPUT_PATH = os.path.join(output_folder, "stats.csv")
     seg_p1, seg_p2, seg_v2, seg_cls = build_segment_tensors(grouped_map_points, device=device)
+    point_poles, point_trunks = build_point_tensors(grouped_map_points, device=device)
     weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
     
     # Write the header to the CSV file once at the beginning
@@ -1390,9 +1588,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
 
     # Main loop over the CSV file rows
     pbar = tqdm(df_data.iterrows(), total=df_data.shape[0], desc="Processing frames")
+    processed_frames = 0
     for frame_idx, row in pbar:
         if frame_idx % FRAME_STRIDE != 0:
             continue
+        if max_frames is not None and processed_frames >= max_frames:
+            break
         
         # --- Load images ---
         rgb_path = os.path.join(rgb_dir, row['rgb_image'])
@@ -1607,15 +1808,32 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             miss_penalty=miss_penalty,
             wrong_hit_penalty=wrong_hit_penalty,
             gps_weight=gps_weight,
-            gps_xy=(gps_x_noisy, gps_y_noisy),
+            gps_xy=(gps_x_noisy, gps_y_noisy) if not disable_gps else None,
             gps_sigma=GPS_SIGMA,
             seg_p1=seg_p1, seg_p2=seg_p2, seg_v2=seg_v2, seg_cls=seg_cls,
+            point_poles=point_poles, point_trunks=point_trunks,
             sensor_range=SENSOR_RANGE,
             class_weights=CLASS_WEIGHTS,
             device=device,
             segment_chunk=4096,   # adjust if you have many segments / limited VRAM
+            max_background_obs=BACKGROUND_OBS_MAX,
+            background_class_weight=BACKGROUND_CLASS_WEIGHT,
+            corridor_weight=CORRIDOR_WEIGHT,
+            corridor_dist_sigma=CORRIDOR_DIST_SIGMA,
+            corridor_heading_sigma=CORRIDOR_HEADING_SIGMA,
+            disable_gps=disable_gps,
+            disable_semantic=disable_semantic,
+            disable_corridor=disable_corridor,
+            disable_background=disable_background,
+            disable_dynamic_gps_weight=disable_dynamic_gps_weight,
+            semantic_model=semantic_model,
+            point_ang_sigma=point_ang_sigma,
+            point_range_sigma=point_range_sigma,
+            point_ang_gate=point_ang_gate,
+            point_max_range_diff=point_max_range_diff,
         )
         frame_stats['frame_idx'] = frame_idx
+        frame_stats['pose_smoothing_enabled'] = int(not disable_pose_smoothing)
         with open(CSV_OUTPUT_PATH, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=stats_fieldnames)
             writer.writerow(frame_stats)
@@ -1627,45 +1845,50 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             weights = np.ones(len(particles), dtype=np.float64) / len(particles)
 
         #""" Visualize overlap for best particle
-        highest_weight_index = np.argmax(weights)
-        best_particle = particles[highest_weight_index]
-        if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
-            visualize_particle_overlap(
-                frame_idx, overlay, best_particle,
-                bev_poles_obs, bev_trunks_obs, bev_background_obs,
-                grouped_map_points,
-                output_folder,
-                sensor_range=SENSOR_RANGE
-            )
+        if visualize:
+            highest_weight_index = np.argmax(weights)
+            best_particle = particles[highest_weight_index]
+            if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
+                visualize_particle_overlap(
+                    frame_idx, overlay, best_particle,
+                    bev_poles_obs, bev_trunks_obs, bev_background_obs,
+                    grouped_map_points,
+                    output_folder,
+                    sensor_range=SENSOR_RANGE
+                )
         #"""
 
         est_pose_raw = estimate_pose_from_particles(particles, weights)
-        if pose_smoothed is None:
-            pose_smoothed = est_pose_raw.copy()
+        if disable_pose_smoothing:
+            pose_out = est_pose_raw.copy()
         else:
-            predicted_pose = pose_smoothed.copy()
-            if had_prev_odom:
-                predicted_pose[0] += delta_distance * np.cos(pose_smoothed[2])
-                predicted_pose[1] += delta_distance * np.sin(pose_smoothed[2])
-                predicted_pose[2] = wrap_to_pi(pose_smoothed[2] + delta_theta)
+            if pose_smoothed is None:
+                pose_smoothed = est_pose_raw.copy()
+            else:
+                predicted_pose = pose_smoothed.copy()
+                if had_prev_odom:
+                    predicted_pose[0] += delta_distance * np.cos(pose_smoothed[2])
+                    predicted_pose[1] += delta_distance * np.sin(pose_smoothed[2])
+                    predicted_pose[2] = wrap_to_pi(pose_smoothed[2] + delta_theta)
 
-            pose_smoothed[0] = (
-                (1.0 - POSE_SMOOTH_ALPHA_POS) * predicted_pose[0]
-                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[0]
-            )
-            pose_smoothed[1] = (
-                (1.0 - POSE_SMOOTH_ALPHA_POS) * predicted_pose[1]
-                + POSE_SMOOTH_ALPHA_POS * est_pose_raw[1]
-            )
-            pose_smoothed[2] = circular_lerp(
-                predicted_pose[2],
-                est_pose_raw[2],
-                POSE_SMOOTH_ALPHA_THETA
-            )
+                pose_smoothed[0] = (
+                    (1.0 - POSE_SMOOTH_ALPHA_POS) * predicted_pose[0]
+                    + POSE_SMOOTH_ALPHA_POS * est_pose_raw[0]
+                )
+                pose_smoothed[1] = (
+                    (1.0 - POSE_SMOOTH_ALPHA_POS) * predicted_pose[1]
+                    + POSE_SMOOTH_ALPHA_POS * est_pose_raw[1]
+                )
+                pose_smoothed[2] = circular_lerp(
+                    predicted_pose[2],
+                    est_pose_raw[2],
+                    POSE_SMOOTH_ALPHA_THETA
+                )
+            pose_out = pose_smoothed.copy()
 
         # Store full pose data for TUM export, using frame_idx as the timestamp
         frame_ts = float(row["timestamp"]) if "timestamp" in row else float(frame_idx)
-        full_trajectory_data.append((frame_ts, pose_smoothed[0], pose_smoothed[1], pose_smoothed[2]))
+        full_trajectory_data.append((frame_ts, pose_out[0], pose_out[1], pose_out[2]))
         gps_trajectory.append((gps_x, gps_y))
         gps_gt_trajectory.append((frame_ts, gps_x, gps_y, 0.0))
         noisy_gps_trajectory.append((frame_ts, gps_x_noisy, gps_y_noisy, 0))
@@ -1676,12 +1899,14 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         # Create a simple list of (x, y) for the visualization function
         trajectory_xy = [(t[1], t[2]) for t in full_trajectory_data]
 
-        visualize_particles(
-            grouped_map_points,
-            particles, frame_idx,
-            output_folder, trajectory_xy, gps_trajectory,
-            rgb_overlay=overlay
-        )
+        if visualize:
+            visualize_particles(
+                grouped_map_points,
+                particles, frame_idx,
+                output_folder, trajectory_xy, gps_trajectory,
+                rgb_overlay=overlay
+            )
+        processed_frames += 1
 
     # --- After loop, save trajectory to TUM file ---
     tum_output_dir = os.path.join(output_folder)
@@ -1708,12 +1933,83 @@ if __name__ == "__main__":
                         help='Output directory. Defaults to amcl_output/ICRA2/spf_lidar/<gps_weight>/')
     parser.add_argument('--require-cuda', action='store_true',
                         help='Fail fast when CUDA is not available.')
+    parser.add_argument('--frame-stride', type=int, default=FRAME_STRIDE,
+                        help='Process one frame every N rows from data.csv.')
+    parser.add_argument('--max-frames', type=int, default=None,
+                        help='Optional cap on processed frames after stride filtering.')
+    parser.add_argument('--no-visualization', action='store_true',
+                        help='Disable overlap/particle image generation for faster tuning.')
+    parser.add_argument('--semantic-sigma', type=float, default=SEMANTIC_SIGMA,
+                        help='Semantic range likelihood sigma.')
+    parser.add_argument('--gps-sigma', type=float, default=GPS_SIGMA,
+                        help='GPS likelihood sigma.')
+    parser.add_argument('--corridor-weight', type=float, default=CORRIDOR_WEIGHT,
+                        help='Weight of corridor term in non-GPS fusion.')
+    parser.add_argument('--corridor-dist-sigma', type=float, default=CORRIDOR_DIST_SIGMA,
+                        help='Corridor distance sigma.')
+    parser.add_argument('--corridor-heading-sigma', type=float, default=CORRIDOR_HEADING_SIGMA,
+                        help='Corridor heading misalignment sigma.')
+    parser.add_argument('--background-class-weight', type=float, default=BACKGROUND_CLASS_WEIGHT,
+                        help='Class weight applied to background observations.')
+    parser.add_argument('--max-background-obs', type=int, default=BACKGROUND_OBS_MAX,
+                        help='Maximum number of background observations per frame.')
+    parser.add_argument('--pose-smooth-alpha-pos', type=float, default=POSE_SMOOTH_ALPHA_POS,
+                        help='Position smoothing alpha for final trajectory.')
+    parser.add_argument('--pose-smooth-alpha-theta', type=float, default=POSE_SMOOTH_ALPHA_THETA,
+                        help='Heading smoothing alpha for final trajectory.')
+    parser.add_argument('--odom-yaw-filter-alpha', type=float, default=ODOM_YAW_FILTER_ALPHA,
+                        help='Low-pass alpha for odometry yaw before delta heading.')
+    parser.add_argument('--expected-obs-count', type=float, default=EXPECTED_OBS_COUNT,
+                        help='Reference observation count used for dynamic GPS weighting.')
+    parser.add_argument('--particle-count', type=int, default=PARTICLE_COUNT,
+                        help='Initial number of particles.')
+    parser.add_argument('--disable-gps', action='store_true',
+                        help='Disable GPS term in measurement fusion.')
+    parser.add_argument('--disable-semantic', action='store_true',
+                        help='Disable semantic likelihood term.')
+    parser.add_argument('--disable-corridor', action='store_true',
+                        help='Disable corridor likelihood term.')
+    parser.add_argument('--disable-background', action='store_true',
+                        help='Ignore background/free-space observations.')
+    parser.add_argument('--disable-dynamic-gps-weight', action='store_true',
+                        help='Use fixed --gps-weight instead of dynamic weighting from observation count.')
+    parser.add_argument('--disable-pose-smoothing', action='store_true',
+                        help='Disable final pose smoothing and export raw particle estimates.')
+    parser.add_argument('--semantic-model', choices=['wall', 'point'], default=SEMANTIC_MODEL,
+                        help='Semantic matching model: wall segments or individual points.')
+    parser.add_argument('--point-ang-sigma', type=float, default=POINT_ANG_SIGMA,
+                        help='Angular sigma (rad) for point-based semantic matching.')
+    parser.add_argument('--point-range-sigma', type=float, default=POINT_RANGE_SIGMA,
+                        help='Range sigma (m) for point-based semantic matching.')
+    parser.add_argument('--point-ang-gate', type=float, default=POINT_ANG_GATE,
+                        help='Angular gating threshold (rad) for point-based matching candidates.')
+    parser.add_argument('--point-max-range-diff', type=float, default=POINT_MAX_RANGE_DIFF,
+                        help='Maximum range residual (m) gate for point-based matching candidates.')
     args = parser.parse_args()
 
     if args.require_cuda and not torch.cuda.is_available():
         raise RuntimeError("CUDA is required (`--require-cuda`) but `torch.cuda.is_available()` is False.")
 
     set_global_seed(args.seed)
+    # Runtime-tunable parameters (used by measurement, motion fusion, and smoothing).
+    FRAME_STRIDE = max(1, int(args.frame_stride))
+    SEMANTIC_SIGMA = float(args.semantic_sigma)
+    GPS_SIGMA = float(args.gps_sigma)
+    CORRIDOR_WEIGHT = float(args.corridor_weight)
+    CORRIDOR_DIST_SIGMA = float(args.corridor_dist_sigma)
+    CORRIDOR_HEADING_SIGMA = float(args.corridor_heading_sigma)
+    BACKGROUND_CLASS_WEIGHT = float(args.background_class_weight)
+    BACKGROUND_OBS_MAX = max(0, int(args.max_background_obs))
+    POSE_SMOOTH_ALPHA_POS = float(args.pose_smooth_alpha_pos)
+    POSE_SMOOTH_ALPHA_THETA = float(args.pose_smooth_alpha_theta)
+    ODOM_YAW_FILTER_ALPHA = float(args.odom_yaw_filter_alpha)
+    EXPECTED_OBS_COUNT = max(1.0, float(args.expected_obs_count))
+    PARTICLE_COUNT = max(10, int(args.particle_count))
+    SEMANTIC_MODEL = str(args.semantic_model)
+    POINT_ANG_SIGMA = max(1e-6, float(args.point_ang_sigma))
+    POINT_RANGE_SIGMA = max(1e-6, float(args.point_range_sigma))
+    POINT_ANG_GATE = max(0.0, float(args.point_ang_gate))
+    POINT_MAX_RANGE_DIFF = max(0.0, float(args.point_max_range_diff))
 
     if args.output_folder:
         output_folder = args.output_folder
@@ -1723,7 +2019,11 @@ if __name__ == "__main__":
     print(
         f"[INFO] Running with Miss Penalty: {args.miss_penalty}, "
         f"Wrong Hit Penalty: {args.wrong_hit_penalty}, GPS Weight: {args.gps_weight}, "
-        f"Seed: {args.seed}, Output: {output_folder}"
+        f"Seed: {args.seed}, Output: {output_folder}, "
+        f"Stride: {FRAME_STRIDE}, MaxFrames: {args.max_frames}, Visualize: {not args.no_visualization}, "
+        f"Model: {SEMANTIC_MODEL}, DisableGPS: {args.disable_gps}, DisableSemantic: {args.disable_semantic}, "
+        f"DisableCorridor: {args.disable_corridor}, DisableBackground: {args.disable_background}, "
+        f"StaticGPSWeight: {args.disable_dynamic_gps_weight}, DisablePoseSmooth: {args.disable_pose_smoothing}"
     )
 
     process_data_with_localization(
@@ -1734,6 +2034,19 @@ if __name__ == "__main__":
         miss_penalty=args.miss_penalty,
         wrong_hit_penalty=args.wrong_hit_penalty,
         gps_weight=args.gps_weight,
-        output_folder=output_folder
+        output_folder=output_folder,
+        max_frames=args.max_frames,
+        visualize=not args.no_visualization,
+        disable_gps=bool(args.disable_gps),
+        disable_semantic=bool(args.disable_semantic),
+        disable_corridor=bool(args.disable_corridor),
+        disable_background=bool(args.disable_background),
+        disable_dynamic_gps_weight=bool(args.disable_dynamic_gps_weight),
+        disable_pose_smoothing=bool(args.disable_pose_smoothing),
+        semantic_model=SEMANTIC_MODEL,
+        point_ang_sigma=POINT_ANG_SIGMA,
+        point_range_sigma=POINT_RANGE_SIGMA,
+        point_ang_gate=POINT_ANG_GATE,
+        point_max_range_diff=POINT_MAX_RANGE_DIFF,
     )
     print("[INFO] Finished processing all frames from the CSV file.")
