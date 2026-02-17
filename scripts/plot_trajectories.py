@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -111,6 +112,61 @@ def align_trajectory(traj_pos, traj_q, gt_pos, gt_q, mirror=False):
     return aligned_pos
 
 
+def umeyama_alignment(src, dst, with_scaling=False):
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    if src.shape != dst.shape:
+        raise ValueError(f"Shape mismatch src={src.shape}, dst={dst.shape}")
+
+    n, m = src.shape
+    mean_src = src.mean(axis=0)
+    mean_dst = dst.mean(axis=0)
+    src_c = src - mean_src
+    dst_c = dst - mean_dst
+    cov = (dst_c.T @ src_c) / n
+
+    U, D, Vt = np.linalg.svd(cov)
+    S = np.eye(m)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        S[-1, -1] = -1
+    R = U @ S @ Vt
+
+    if with_scaling:
+        var_src = (src_c ** 2).sum() / n
+        scale = np.trace(np.diag(D) @ S) / var_src
+    else:
+        scale = 1.0
+
+    t = mean_dst - scale * R @ mean_src
+    return scale, R, t
+
+
+def apply_transform(points, scale, rot, trans):
+    return (scale * (rot @ points.T)).T + trans
+
+
+def anchor_start_to_ground_truth(traj_pos, gt_pos):
+    """
+    Shift an already-aligned trajectory so its first sample matches GT start.
+    """
+    if traj_pos is None or gt_pos is None or len(traj_pos) == 0 or len(gt_pos) == 0:
+        return traj_pos
+    delta = gt_pos[0] - traj_pos[0]
+    return traj_pos + delta
+
+
+def stride_keep_end(arr, stride):
+    """
+    Downsample an array with fixed stride while always preserving first/last element.
+    """
+    if arr is None or stride <= 1 or len(arr) <= 2:
+        return arr
+    idx = np.arange(0, len(arr), stride)
+    if idx[-1] != len(arr) - 1:
+        idx = np.append(idx, len(arr) - 1)
+    return arr[idx]
+
+
 def load_landmark_points(geojson_path, target_crs='epsg:32630'):
     """Return centered poles, vines, and row segments in projected coordinates."""
     geojson_path = Path(geojson_path)
@@ -192,7 +248,20 @@ def load_landmark_points(geojson_path, target_crs='epsg:32630'):
     }
 
 
-def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions=None, errors=None, label=None, landmark_points=None, cmap='viridis', vmin=None, vmax=None):
+def plot_trajectory_with_error_colors(
+    ax,
+    trajectory_pos,
+    gt_positions=None,
+    errors=None,
+    label=None,
+    landmark_points=None,
+    cmap='viridis',
+    vmin=None,
+    vmax=None,
+    fixed_xlim=None,
+    fixed_ylim=None,
+    show_ylabel=True,
+):
     """
     Plot a trajectory with colors representing errors, overlay its GPS ground truth path,
     and optionally add mapped landmarks.
@@ -252,14 +321,22 @@ def plot_trajectory_with_error_colors(ax, trajectory_pos, gt_positions=None, err
     if extra_mat is not None:
         parts.append(extra_mat)
     all_points = np.vstack(parts)
-    ax.set_xlim(all_points[:, 0].min() - 1, all_points[:, 0].max() + 1)
-    ax.set_ylim(all_points[:, 1].min() - 1, all_points[:, 1].max() + 1)
+
+    if fixed_xlim is not None and fixed_ylim is not None:
+        ax.set_xlim(*fixed_xlim)
+        ax.set_ylim(*fixed_ylim)
+        ax.set_xticks(np.arange(fixed_xlim[0], fixed_xlim[1] + 0.001, 5.0))
+        ax.set_yticks(np.arange(fixed_ylim[0], fixed_ylim[1] + 0.001, 5.0))
+    else:
+        ax.set_xlim(all_points[:, 0].min() - 1, all_points[:, 0].max() + 1)
+        ax.set_ylim(all_points[:, 1].min() - 1, all_points[:, 1].max() + 1)
+
     ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
+    ax.set_ylabel('Y (m)' if show_ylabel else '')
     ax.set_title(label)
     ax.grid(True, alpha=0.3)
     ax.axis('equal')
-    ax.legend()
+    ax.legend(loc='lower right')
     
     if errors is not None and len(points) > 1:
         cbar = plt.colorbar(lc, ax=ax, label='Error (m)')
@@ -271,44 +348,58 @@ def main():
     script_dir = Path(__file__).parent
     base_dir = script_dir.parent
     data_dir = base_dir / 'data'
-    results_dir = base_dir / 'results'
+    results_override = os.environ.get('RESULTS_DIR')
+    if results_override:
+        results_dir = Path(results_override)
+        if not results_dir.is_absolute():
+            results_dir = base_dir / results_dir
+    else:
+        results_dir = base_dir / 'results'
     results_dir.mkdir(exist_ok=True)
     
+    noisy_gps_stride = int(os.environ.get('NOISY_GPS_STRIDE', '4'))
+
+    amcl_gps_traj = results_dir / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum'
+    amcl_gps_gt = results_dir / 'amcl_ngps' / 'tum1' / 'gps_pose.tum'
+    use_amcl_gps = amcl_gps_traj.exists() and amcl_gps_gt.exists()
+    amcl_label = 'AMCL+GPS' if use_amcl_gps else 'AMCL'
+    amcl_traj = amcl_gps_traj if use_amcl_gps else (results_dir / 'amcl' / 'tum1' / 'amcl_pose.tum')
+    amcl_gt = amcl_gps_gt if use_amcl_gps else (results_dir / 'amcl' / 'tum1' / 'gps_pose.tum')
+
     trajectories = {
-        'SPF LiDAR': {
-            'trajectory': results_dir / 'spf_lidar' / 'spf_lidar.tum',
-            'ground_truth': results_dir / 'spf_lidar' / 'gps_pose.tum'
-        },
-        'SPF LiDAR++': {
+        'SLPF(ours)': {
             'trajectory': results_dir / 'spf_lidar++' / '0.5' / 'trajectory_0.5.tum',
-            'ground_truth': results_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum'
+            'ground_truth': results_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum',
+            'stride': 1
+        },
+        amcl_label: {
+            'trajectory': amcl_traj,
+            # Compare against the shared GPS pose file like other methods
+            'ground_truth': amcl_gt,
+            'stride': 1
+        },
+        'RTABMAP RGBD': {
+            'trajectory': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+            'ground_truth': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+            'stride': 1
         },
         'Noisy GPS': {
             # use the synthetic noisy GNSS (already in results) as the method trajectory
             'trajectory': results_dir / 'ngps_only' / 'noisy_gnss.tum',
             # compare against the common GPS ground truth stored with ngps results
-            'ground_truth': results_dir / 'ngps_only' / 'gps_pose.tum'
-        },
-        'AMCL': {
-            'trajectory': results_dir / 'amcl' / 'tum1' / 'amcl_pose.tum',
-            # Compare AMCL against the shared GPS pose file like other methods
-            'ground_truth': results_dir / 'amcl' / 'tum1' / 'gps_pose.tum'
-        },
-        'RTABMap RGBD': {
-            'trajectory': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
-            'ground_truth': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum'
-        },
-        'RTABMap RGB': {
-            'trajectory': results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
-            'ground_truth': results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum'
+            'ground_truth': results_dir / 'ngps_only' / 'gps_pose.tum',
+            'stride': noisy_gps_stride
         }
     }
+    # Keep explicit start-point anchoring only for RTAB-Map.
+    anchor_start_labels = {'RTABMAP RGBD'}
 
     plot_data = []
     for label, paths in trajectories.items():
         print(f"Processing {label}...")
         traj_path = Path(paths['trajectory'])
         gt_path = Path(paths['ground_truth']) if paths.get('ground_truth') is not None else None
+        stride = max(1, int(paths.get('stride', 1)))
 
         if not traj_path.exists():
             print(f"  Warning: trajectory file not found, skipping: {traj_path}")
@@ -326,34 +417,42 @@ def main():
             print(f"  Warning: Could not read trajectory for {label}")
             continue
 
-        # Initial alignment for RTABMap methods
-        if 'RTABMap' in label:
-            # Find closest GT index for the start of the trajectory
-            idx0_gt = np.argmin(np.abs(gt_ts - traj_ts[0]))
-            
-            # Align only if we have reasonable overlap start
-            if np.abs(gt_ts[idx0_gt] - traj_ts[0]) < 1.0:
-                print(f"  Aligning {label} to ground truth start pose (with mirroring)...")
-                traj_pos = align_trajectory(
-                    traj_pos, traj_q, 
-                    gt_pos[idx0_gt:], gt_q[idx0_gt:],
-                    mirror=True
-                )
-
         if gt_pos is not None:
             gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
-            errors = compute_errors(traj_pos, gt_interp)
+            # Keep visualization in the same aligned frame used for metrics:
+            # Umeyama SE(3) alignment without scaling.
+            try:
+                scale, rot, trans = umeyama_alignment(traj_pos, gt_interp, with_scaling=False)
+                traj_plot = apply_transform(traj_pos, scale, rot, trans)
+            except Exception:
+                traj_plot = traj_pos
+
+            if label in anchor_start_labels:
+                applied_shift = gt_interp[0] - traj_plot[0]
+                traj_plot = anchor_start_to_ground_truth(traj_plot, gt_interp)
+                print(
+                    f"  Start anchored to GT "
+                    f"(applied dx={applied_shift[0]:.4f}, dy={applied_shift[1]:.4f}, dz={applied_shift[2]:.4f})"
+                )
+
+            if stride > 1:
+                traj_plot = stride_keep_end(traj_plot, stride)
+                gt_interp = stride_keep_end(gt_interp, stride)
+                print(f"  Stride applied: every {stride} samples")
+
+            errors = compute_errors(traj_plot, gt_interp)
             print(f"  Mean error: {errors.mean():.4f} m")
             print(f"  Max error: {errors.max():.4f} m")
             print(f"  Min error: {errors.min():.4f} m")
         else:
+            traj_plot = traj_pos
             errors = None
             print(f"  Note: {label} is lidar-only; skipping GT comparison.")
 
         plot_data.append({
             'label': label,
-            'trajectory': traj_pos,
-            'ground_truth': gt_pos,
+            'trajectory': traj_plot,
+            'ground_truth': gt_interp if gt_pos is not None else None,
             'errors': errors
         })
 
@@ -364,24 +463,29 @@ def main():
     landmark_points = load_landmark_points(data_dir / 'riseholme_poles_trunk.geojson')
 
     n_plots = len(plot_data)
-    n_cols = 3
+    n_cols = 4
     n_rows = int(np.ceil(n_plots / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(22, 7 * n_rows))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(5.2 * n_cols, 5.0 * n_rows),
+        constrained_layout=True,
+    )
+    fig.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
     axes = np.atleast_1d(axes).flatten()
 
-    # Define explicit min/max values for row-wise colormaps
-    # Row 1 (indices 0..n_cols-1): SPF LiDAR variants + Noisy GPS
-    vmin1, vmax1 = 0.0, 5.0
-
-    # Remaining rows: broader error range for AMCL/RTABMap methods
-    vmin2, vmax2 = 0.0, 40.0
+    # Per-method colormap ranges keep low-error and high-error methods readable.
+    method_vrange = {
+        'SLPF(ours)': (0.0, 5.0),
+        'Noisy GPS': (0.0, 10.0),
+        'AMCL': (0.0, 5.0),
+        'AMCL+GPS': (0.0, 5.0),
+        'RTABMAP RGBD': (0.0, 40.0),
+    }
 
     for idx, item in enumerate(plot_data):
-        # Assign shared range based on row
-        if idx < n_cols:
-            v_min, v_max = vmin1, vmax1
-        else:
-            v_min, v_max = vmin2, vmax2
+        v_min, v_max = method_vrange.get(item['label'], (0.0, 10.0))
+        is_left_col = (idx % n_cols) == 0
 
         plot_trajectory_with_error_colors(
             axes[idx],
@@ -392,16 +496,19 @@ def main():
             landmark_points=landmark_points,
             cmap='viridis',
             vmin=v_min,
-            vmax=v_max
+            vmax=v_max,
+            show_ylabel=is_left_col,
         )
 
     for idx in range(len(plot_data), len(axes)):
         axes[idx].set_visible(False)
 
-    fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.1, hspace=0.3, wspace=0.25)
-    output_path = results_dir / 'trajectory_comparison.png'
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\nPlot saved to {output_path}")
+    output_png = results_dir / 'trajectory_comparison.png'
+    output_pdf = results_dir / 'trajectory_comparison.pdf'
+    plt.savefig(output_png, dpi=150, bbox_inches='tight', pad_inches=0.03)
+    plt.savefig(output_pdf, bbox_inches='tight', pad_inches=0.03)
+    print(f"\nPlot saved to {output_png}")
+    print(f"Plot saved to {output_pdf}")
 
 
 if __name__ == '__main__':
