@@ -6,7 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
-from pyproj import Transformer
+
+from geojson_rows import iter_projected_points
 
 
 def read_tum_file(filepath):
@@ -173,29 +174,9 @@ def load_landmark_points(geojson_path, target_crs='epsg:32630'):
     if not geojson_path.exists():
         return {'poles': np.empty((0, 2)), 'trunks': np.empty((0, 2)), 'segments_pole': np.empty((0, 2, 2)), 'segments_trunk': np.empty((0, 2, 2))}
 
-    transformer = Transformer.from_crs('epsg:4326', target_crs, always_xy=True)
-    with open(geojson_path, 'r') as f:
-        data = json.load(f)
-
-    features = data.get('features', [])
     records = []
-    for feature in features:
-        geom = feature.get('geometry') or {}
-        if geom.get('type') != 'Point':
-            continue
-        coords = geom.get('coordinates', [])
-        if len(coords) < 2:
-            continue
-        lon, lat = coords[0], coords[1]
-        x, y = transformer.transform(lon, lat)
-        props = feature.get('properties', {})
-        feature_type = props.get('feature_type', '').lower()
-        row_id = props.get('vine_vine_row_id') or ''
-        if not row_id:
-            row_post_id = props.get('row_post_id', '')
-            row_id = row_post_id.rsplit('_post_', 1)[0] if '_post_' in row_post_id else row_post_id
-        row_id = row_id or 'unknown'
-        records.append({'x': x, 'y': y, 'type': feature_type, 'row_id': row_id})
+    for item in iter_projected_points(geojson_path, target_crs=target_crs):
+        records.append({'x': item['x'], 'y': item['y'], 'type': item['feature_type'], 'row_id': item['row_id']})
 
     if not records:
         return {'poles': np.empty((0, 2)), 'trunks': np.empty((0, 2)), 'segments_pole': np.empty((0, 2, 2)), 'segments_trunk': np.empty((0, 2, 2))}
@@ -274,7 +255,7 @@ def plot_trajectory_with_error_colors(
     plot_vmax = vmax if vmax is not None else errors.max()
     norm = Normalize(vmin=plot_vmin, vmax=plot_vmax)
     
-    lc = LineCollection(segments, cmap=cmap, norm=norm, linewidths=2)
+    lc = LineCollection(segments, cmap=cmap, norm=norm, linewidths=2.8)
     if len(points) > 1:
         if errors is not None:
             lc.set_array(errors[:-1])
@@ -356,41 +337,122 @@ def main():
     else:
         results_dir = base_dir / 'results'
     results_dir.mkdir(exist_ok=True)
+
+    baselines_override = os.environ.get('PLOT_BASELINES_ROOT', '').strip()
+    if baselines_override:
+        baselines_dir = Path(baselines_override)
+        if not baselines_dir.is_absolute():
+            baselines_dir = base_dir / baselines_dir
+    else:
+        baselines_dir = results_dir
     
     noisy_gps_stride = int(os.environ.get('NOISY_GPS_STRIDE', '4'))
+    use_scale_alignment = os.environ.get('PLOT_USE_SCALE_ALIGNMENT', '1') != '0'
+    show_landmarks = os.environ.get('PLOT_SHOW_LANDMARKS', '0') == '1'
+    method_labels_csv = os.environ.get('PLOT_METHOD_LABELS', '').strip()
 
-    amcl_gps_traj = results_dir / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum'
-    amcl_gps_gt = results_dir / 'amcl_ngps' / 'tum1' / 'gps_pose.tum'
-    use_amcl_gps = amcl_gps_traj.exists() and amcl_gps_gt.exists()
-    amcl_label = 'AMCL+GPS' if use_amcl_gps else 'AMCL'
-    amcl_traj = amcl_gps_traj if use_amcl_gps else (results_dir / 'amcl' / 'tum1' / 'amcl_pose.tum')
-    amcl_gt = amcl_gps_gt if use_amcl_gps else (results_dir / 'amcl' / 'tum1' / 'gps_pose.tum')
+    amcl_ngps_traj_candidates = [
+        baselines_dir / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum',
+        baselines_dir / 'iros' / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum',
+        results_dir / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum',
+        results_dir / 'iros' / 'amcl_ngps' / 'tum1' / 'trajectory_0.5.tum',
+    ]
+    amcl_ngps_gt_candidates = [
+        baselines_dir / 'amcl_ngps' / 'tum1' / 'gps_pose.tum',
+        baselines_dir / 'iros' / 'amcl_ngps' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'amcl_ngps' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'iros' / 'amcl_ngps' / 'tum1' / 'gps_pose.tum',
+    ]
+    amcl_ngps_traj = next((p for p in amcl_ngps_traj_candidates if p.exists()), amcl_ngps_traj_candidates[0])
+    amcl_ngps_gt = next((p for p in amcl_ngps_gt_candidates if p.exists()), amcl_ngps_gt_candidates[0])
+    has_amcl_ngps = amcl_ngps_traj.exists() and amcl_ngps_gt.exists()
+
+    def first_existing(*candidates):
+        for p in candidates:
+            path = Path(p)
+            if path.exists():
+                return path
+        return Path(candidates[0])
+
+    noisy_gps_traj_override = os.environ.get('PLOT_NOISY_GPS_TUM', '').strip()
+    if noisy_gps_traj_override:
+        noisy_gps_traj = Path(noisy_gps_traj_override)
+        if not noisy_gps_traj.is_absolute():
+            noisy_gps_traj = base_dir / noisy_gps_traj
+    else:
+        noisy_gps_traj = first_existing(
+            baselines_dir / 'noisy_gps' / 'noisy_gps_seed_11.tum',
+            baselines_dir / 'noisy_gps' / 'noisy_gnss.tum',
+            results_dir / 'noisy_gps' / 'noisy_gps_seed_11.tum',
+            results_dir / 'noisy_gps' / 'noisy_gnss.tum',
+            baselines_dir / 'ngps_only' / 'noisy_gnss.tum',
+            baselines_dir / 'ngps_only-deprecated' / 'noisy_gnss.tum',
+        )
+
+    noisy_gps_gt_override = os.environ.get('PLOT_NOISY_GPS_GT_TUM', '').strip()
+    if noisy_gps_gt_override:
+        noisy_gps_gt = Path(noisy_gps_gt_override)
+        if not noisy_gps_gt.is_absolute():
+            noisy_gps_gt = base_dir / noisy_gps_gt
+    else:
+        noisy_gps_gt = first_existing(
+            baselines_dir / 'noisy_gps' / 'gps_pose.tum',
+            results_dir / 'noisy_gps' / 'gps_pose.tum',
+            baselines_dir / 'ngps_only' / 'gps_pose.tum',
+            baselines_dir / 'ngps_only-deprecated' / 'gps_pose.tum',
+        )
 
     trajectories = {
         'SLPF(ours)': {
-            'trajectory': results_dir / 'spf_lidar++' / '0.5' / 'trajectory_0.5.tum',
-            'ground_truth': results_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum',
+            'trajectory': baselines_dir / 'spf_lidar++' / '0.5' / 'trajectory_0.5.tum',
+            'ground_truth': baselines_dir / 'spf_lidar++' / '0.5' / 'gps_pose.tum',
             'stride': 1
         },
-        amcl_label: {
-            'trajectory': amcl_traj,
+        'AMCL': {
+            'trajectory': baselines_dir / 'amcl' / 'tum1' / 'amcl_pose.tum',
             # Compare against the shared GPS pose file like other methods
-            'ground_truth': amcl_gt,
+            'ground_truth': baselines_dir / 'amcl' / 'tum1' / 'gps_pose.tum',
+            'stride': 1
+        },
+        'AMCL+GPS': {
+            'trajectory': amcl_ngps_traj,
+            'ground_truth': amcl_ngps_gt,
             'stride': 1
         },
         'RTABMAP RGBD': {
-            'trajectory': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
-            'ground_truth': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+            'trajectory': baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+            'ground_truth': baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+            'stride': 1
+        },
+        'RTABMAP RGB': {
+            'trajectory': baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+            'ground_truth': baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+            'stride': 1
+        },
+        'ORB-SLAM3 RGBD (full)': {
+            'trajectory': results_dir / 'orbslam3' / 'rgbd' / 'full' / 'orbslam3_rgbd.tum',
+            'ground_truth': results_dir / 'orbslam3' / 'rgbd' / 'full' / 'gps_pose.tum',
+            'stride': 1
+        },
+        'ORB-SLAM3 Mono (full)': {
+            'trajectory': results_dir / 'orbslam3' / 'mono' / 'full' / 'orbslam3_mono.tum',
+            'ground_truth': results_dir / 'orbslam3' / 'mono' / 'full' / 'gps_pose.tum',
             'stride': 1
         },
         'Noisy GPS': {
             # use the synthetic noisy GNSS (already in results) as the method trajectory
-            'trajectory': results_dir / 'ngps_only' / 'noisy_gnss.tum',
+            'trajectory': noisy_gps_traj,
             # compare against the common GPS ground truth stored with ngps results
-            'ground_truth': results_dir / 'ngps_only' / 'gps_pose.tum',
+            'ground_truth': noisy_gps_gt,
             'stride': noisy_gps_stride
         }
     }
+    if not has_amcl_ngps:
+        trajectories.pop('AMCL+GPS', None)
+
+    if method_labels_csv:
+        allowed = {x.strip() for x in method_labels_csv.split(',') if x.strip()}
+        trajectories = {k: v for k, v in trajectories.items() if k in allowed}
     # Keep explicit start-point anchoring only for RTAB-Map.
     anchor_start_labels = {'RTABMAP RGBD'}
 
@@ -419,10 +481,10 @@ def main():
 
         if gt_pos is not None:
             gt_interp = interpolate_ground_truth(gt_ts, gt_pos, traj_ts)
-            # Keep visualization in the same aligned frame used for metrics:
-            # Umeyama SE(3) alignment without scaling.
+            # Visualization alignment:
+            # by default use Sim(3) so trajectories are visible on the GT scale.
             try:
-                scale, rot, trans = umeyama_alignment(traj_pos, gt_interp, with_scaling=False)
+                scale, rot, trans = umeyama_alignment(traj_pos, gt_interp, with_scaling=use_scale_alignment)
                 traj_plot = apply_transform(traj_pos, scale, rot, trans)
             except Exception:
                 traj_plot = traj_pos
@@ -460,7 +522,15 @@ def main():
         print("No trajectories to plot.")
         return
 
-    landmark_points = load_landmark_points(data_dir / 'riseholme_poles_trunk.geojson')
+    geojson_override = os.environ.get('PLOT_GEOJSON_PATH', '').strip()
+    if geojson_override:
+        geojson_path = Path(geojson_override)
+        if not geojson_path.is_absolute():
+            geojson_path = base_dir / geojson_path
+    else:
+        geojson_path = data_dir / 'riseholme_poles_trunk.geojson'
+
+    landmark_points = load_landmark_points(geojson_path) if show_landmarks else None
 
     n_plots = len(plot_data)
     n_cols = 4
@@ -481,6 +551,9 @@ def main():
         'AMCL': (0.0, 5.0),
         'AMCL+GPS': (0.0, 5.0),
         'RTABMAP RGBD': (0.0, 40.0),
+        'RTABMAP RGB': (0.0, 40.0),
+        'ORB-SLAM3 RGBD (full)': (0.0, 20.0),
+        'ORB-SLAM3 Mono (full)': (0.0, 12.0),
     }
 
     for idx, item in enumerate(plot_data):
