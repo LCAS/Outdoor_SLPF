@@ -216,3 +216,6 @@ old/*
 *.jpg
 *.jpeg
 *.svg
+
+# Data artifacts
+data/**/*.zip
