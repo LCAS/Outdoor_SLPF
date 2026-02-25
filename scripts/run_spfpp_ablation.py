@@ -39,6 +39,8 @@ DEFAULT_SEEDS = "11,22,33"
 
 VARIANT_ORDER = [
     "full",
+    "poles_only",
+    "trunks_only",
     "no_gps",
     "no_semantic",
     "no_corridor",
@@ -50,6 +52,8 @@ VARIANT_ORDER = [
 
 VARIANT_ARGS = {
     "full": [],
+    "poles_only": ["--semantic-classes", "poles"],
+    "trunks_only": ["--semantic-classes", "trunks"],
     "no_gps": ["--disable-gps"],
     "no_semantic": ["--disable-semantic"],
     "no_corridor": ["--disable-corridor"],

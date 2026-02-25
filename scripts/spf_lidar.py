@@ -5,6 +5,8 @@ import csv
 import argparse
 import math
 import random
+import time
+import json
 from pathlib import Path
 from ultralytics import YOLO
 from tqdm import tqdm
@@ -17,6 +19,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from pyproj import Transformer
 
+from geojson_rows import extract_row_id as extract_geojson_row_id
 
 # ---------- CONFIG ----------
 base_dir = Path(__file__).parent.parent
@@ -60,15 +63,29 @@ CORRIDOR_WEIGHT = 0.30
 CORRIDOR_DIST_SIGMA = 1.50
 CORRIDOR_HEADING_SIGMA = 0.35
 SEMANTIC_MODEL = "wall"
+SEMANTIC_CLASSES_MODE = "both"
 POINT_ANG_SIGMA = 0.08
 POINT_RANGE_SIGMA = 0.35
 POINT_ANG_GATE = 0.20
 POINT_MAX_RANGE_DIFF = 1.5
+RUNTIME_STAGE_FIELDS = (
+    "io_sec",
+    "semantic_inference_sec",
+    "lidar_association_sec",
+    "motion_update_sec",
+    "measurement_update_sec",
+    "pose_post_sec",
+    "resample_sec",
+    "visualization_sec",
+    "stats_write_sec",
+)
 
 geojson_path = base_dir / "data/riseholme_poles_trunk.geojson"
 # Paths for folder-based processing
-DATA_PATH = "data/2025/ICRA2/"
-CSV_DATA_PATH = DATA_PATH + "data.csv"
+DEFAULT_DATA_PATH = base_dir / "data" / "2025" / "ICRA2"
+DEFAULT_CSV_DATA_PATH = DEFAULT_DATA_PATH / "data.csv"
+DATA_PATH = str(DEFAULT_DATA_PATH)
+CSV_DATA_PATH = str(DEFAULT_CSV_DATA_PATH)
 
 # Camera Intrinsics
 class Intrinsics:
@@ -158,6 +175,118 @@ def save_tum_trajectory(trajectory_data, output_path):
             f.write(f"{timestamp} {x} {y} 0.0 {qx} {qy} {qz} {qw}\n")
     print(f"[INFO] Trajectory saved to {output_path}")
 
+
+def _sync_cuda_for_timing(enabled: bool):
+    """Synchronize CUDA kernels so stage timing reflects real GPU elapsed time."""
+    if enabled and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def write_runtime_profile(
+    output_folder,
+    runtime_rows,
+    stage_fields,
+    warmup_frames,
+    total_processed_frames,
+    frame_stride,
+):
+    """
+    Persist per-frame runtime breakdown and summary metrics.
+
+    Writes:
+      - runtime_profile_frames.csv
+      - runtime_profile_summary.json
+    """
+    if not runtime_rows:
+        print("[RUNTIME] Profiling enabled but no frames were recorded after warmup.")
+        return None
+
+    frame_csv_path = os.path.join(output_folder, "runtime_profile_frames.csv")
+    summary_json_path = os.path.join(output_folder, "runtime_profile_summary.json")
+    os.makedirs(output_folder, exist_ok=True)
+
+    fieldnames = [
+        "frame_idx",
+        "processed_idx",
+        "frame_total_sec",
+        "frame_hz",
+        *stage_fields,
+        "other_sec",
+    ]
+    with open(frame_csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in runtime_rows:
+            writer.writerow(row)
+
+    def _stats(values):
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.size == 0:
+            return {
+                "mean_sec": None,
+                "median_sec": None,
+                "p95_sec": None,
+                "total_sec": 0.0,
+            }
+        return {
+            "mean_sec": float(np.mean(arr)),
+            "median_sec": float(np.median(arr)),
+            "p95_sec": float(np.percentile(arr, 95)),
+            "total_sec": float(np.sum(arr)),
+        }
+
+    total_frame_sec = np.asarray([r["frame_total_sec"] for r in runtime_rows], dtype=np.float64)
+    profiled_frames = int(len(runtime_rows))
+    wall_total = float(np.sum(total_frame_sec))
+    pipeline_hz = float(profiled_frames / wall_total) if wall_total > 1e-12 else 0.0
+    frame_hz_mean = float(np.mean(np.asarray([r["frame_hz"] for r in runtime_rows], dtype=np.float64)))
+
+    components = {}
+    for stage_name in [*stage_fields, "other_sec"]:
+        vals = [r[stage_name] for r in runtime_rows]
+        stage_stats = _stats(vals)
+        total_sec = float(stage_stats["total_sec"])
+        components[stage_name] = {
+            **stage_stats,
+            "mean_ms": float(1000.0 * stage_stats["mean_sec"]) if stage_stats["mean_sec"] is not None else None,
+            "p95_ms": float(1000.0 * stage_stats["p95_sec"]) if stage_stats["p95_sec"] is not None else None,
+            "share_of_frame_time": float(total_sec / wall_total) if wall_total > 1e-12 else 0.0,
+            "equivalent_hz": float(profiled_frames / total_sec) if total_sec > 1e-12 else None,
+        }
+
+    summary = {
+        "profile": {
+            "warmup_frames": int(max(0, warmup_frames)),
+            "profiled_frames": profiled_frames,
+            "total_processed_frames": int(total_processed_frames),
+            "frame_stride": int(max(1, frame_stride)),
+        },
+        "pipeline": {
+            "processed_frame_hz": pipeline_hz,
+            "processed_frame_sec_mean": float(np.mean(total_frame_sec)),
+            "processed_frame_sec_median": float(np.median(total_frame_sec)),
+            "processed_frame_sec_p95": float(np.percentile(total_frame_sec, 95)),
+            "processed_frame_hz_mean_of_inverse": frame_hz_mean,
+            "effective_input_hz_with_stride": float(pipeline_hz * max(1, frame_stride)),
+        },
+        "components": components,
+        "artifacts": {
+            "runtime_profile_frames_csv": frame_csv_path,
+            "runtime_profile_summary_json": summary_json_path,
+        },
+    }
+
+    with open(summary_json_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    print(
+        f"[RUNTIME] Profiled {profiled_frames} frames (warmup={max(0, warmup_frames)}). "
+        f"Pipeline={pipeline_hz:.2f} Hz (stride-adjusted {pipeline_hz * max(1, frame_stride):.2f} Hz)."
+    )
+    print(f"[RUNTIME] Wrote {frame_csv_path}")
+    print(f"[RUNTIME] Wrote {summary_json_path}")
+    return summary
+
 def load_landmarks_as_lines(path):
     """
     Loads landmarks and groups them by row, preserving individual points.
@@ -167,15 +296,18 @@ def load_landmarks_as_lines(path):
 
     # Create a unified 'row_id' column
     def extract_row_id(row):
-        if row['feature_type'] == 'vine' and 'vine_vine_row_id' in row and row['vine_vine_row_id']:
-            return row['vine_vine_row_id']
-        elif row['feature_type'] == 'row_post' and 'feature_name' in row and row['feature_name']:
-            parts = row['feature_name'].split('_')
-            return f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else None
-        return None
+        return extract_geojson_row_id(
+            {
+                "feature_type": row.get("feature_type", ""),
+                "vine_vine_row_id": row.get("vine_vine_row_id", ""),
+                "row_post_id": row.get("row_post_id", ""),
+                "feature_name": row.get("feature_name", ""),
+            }
+        )
 
     gdf['row_id'] = gdf.apply(extract_row_id, axis=1)
-    gdf.dropna(subset=['row_id'], inplace=True)
+    gdf = gdf[gdf['row_id'].astype(str).str.len() > 0]
+    gdf = gdf[gdf['row_id'] != 'unknown']
 
     # Transform coordinates and classify
     if not gdf.crs or not gdf.crs.is_projected:
@@ -813,9 +945,14 @@ def build_segment_tensors(grouped_map_points, device='cuda'):
             p2_list.append(p2['coords'])
             seg_cls_list.append(seg_class)
 
-    p1 = torch.as_tensor(np.array(p1_list, dtype=np.float32), device=device)  # (M,2)
-    p2 = torch.as_tensor(np.array(p2_list, dtype=np.float32), device=device)  # (M,2)
-    seg_cls = torch.as_tensor(np.array(seg_cls_list, dtype=np.int64), device=device)  # (M,)
+    if p1_list:
+        p1 = torch.as_tensor(np.array(p1_list, dtype=np.float32), device=device)  # (M,2)
+        p2 = torch.as_tensor(np.array(p2_list, dtype=np.float32), device=device)  # (M,2)
+        seg_cls = torch.as_tensor(np.array(seg_cls_list, dtype=np.int64), device=device)  # (M,)
+    else:
+        p1 = torch.empty((0, 2), dtype=torch.float32, device=device)
+        p2 = torch.empty((0, 2), dtype=torch.float32, device=device)
+        seg_cls = torch.empty((0,), dtype=torch.int64, device=device)
     v2 = p2 - p1  # (M,2)
 
     return p1, p2, v2, seg_cls
@@ -843,6 +980,19 @@ def build_point_tensors(grouped_map_points, device='cuda'):
 
     return poles_t, trunks_t
 
+
+def filter_grouped_map_points_by_classes(grouped_map_points, enabled_classes):
+    """
+    Keep only map landmarks whose semantic class is in enabled_classes.
+    """
+    enabled = {int(c) for c in enabled_classes}
+    filtered = {}
+    for row_id, points_in_row in grouped_map_points.items():
+        kept = [p for p in points_in_row if int(p.get('class', -1)) in enabled]
+        if kept:
+            filtered[row_id] = kept
+    return filtered
+
 def measurement_likelihood_gpu(grouped_map_points_unused,
                                bev_poles_obs,
                                bev_trunks_obs,
@@ -855,6 +1005,7 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
                                gps_sigma=GPS_SIGMA,
                                *,
                                seg_p1=None, seg_p2=None, seg_v2=None, seg_cls=None,
+                               sem_seg_p1=None, sem_seg_p2=None, sem_seg_v2=None, sem_seg_cls=None,
                                point_poles=None, point_trunks=None,
                                sensor_range=SENSOR_RANGE,
                                class_weights=CLASS_WEIGHTS,
@@ -897,10 +1048,12 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
     if semantic_model not in ("wall", "point"):
         raise ValueError(f"Unsupported semantic model: {semantic_model}")
 
-    needs_segments = (semantic_model == "wall") or (not disable_corridor)
-    if needs_segments:
+    if not disable_corridor:
         assert seg_p1 is not None and seg_p2 is not None and seg_v2 is not None and seg_cls is not None, \
             "Provide precomputed segment tensors via build_segment_tensors()."
+    if (not disable_semantic) and semantic_model == "wall":
+        if sem_seg_p1 is None or sem_seg_p2 is None or sem_seg_v2 is None or sem_seg_cls is None:
+            sem_seg_p1, sem_seg_p2, sem_seg_v2, sem_seg_cls = seg_p1, seg_p2, seg_v2, seg_cls
     torch_device = torch.device(device)
     eps = 1e-12
 
@@ -939,6 +1092,9 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
 
     # ---- Corridor term: nearest segment distance + heading alignment ----
     def compute_corridor_log(p_xy: torch.Tensor, p_th: torch.Tensor):
+        if seg_p1 is None or seg_p1.shape[0] == 0:
+            z = torch.zeros(N, dtype=torch.float32, device=torch_device)
+            return z, z, z
         seg_len2 = torch.sum(seg_v2 * seg_v2, dim=1).clamp_min(1e-8)  # (M,)
         rel = p_xy[:, None, :] - seg_p1[None, :, :]                  # (N,M,2)
         t = torch.sum(rel * seg_v2[None, :, :], dim=2) / seg_len2[None, :]  # (N,M)
@@ -1091,12 +1247,12 @@ def measurement_likelihood_gpu(grouped_map_points_unused,
             def cross2d(a, b):  # (...,2) x (...,2)
                 return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
-            Nseg = seg_p1.shape[0]
+            Nseg = sem_seg_p1.shape[0]
             for start in range(0, Nseg, segment_chunk):
                 end = min(start + segment_chunk, Nseg)
-                p1_chunk = seg_p1[start:end]   # (M,2)
-                v2_chunk = seg_v2[start:end]   # (M,2)
-                cls_chunk = seg_cls[start:end] # (M,)
+                p1_chunk = sem_seg_p1[start:end]   # (M,2)
+                v2_chunk = sem_seg_v2[start:end]   # (M,2)
+                cls_chunk = sem_seg_cls[start:end] # (M,)
 
                 v1 = O[:, :, None, :] - p1_chunk[None, None, :, :]                 # (N,J,M,2)
                 denom = (v2_chunk[None, None, :, :] * v3[:, :, None, :]).sum(-1)   # (N,J,M)
@@ -1514,9 +1670,19 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
                                      disable_gps=False, disable_semantic=False, disable_corridor=False,
                                      disable_background=False, disable_dynamic_gps_weight=False,
                                      disable_pose_smoothing=False, semantic_model=SEMANTIC_MODEL,
+                                     semantic_classes=SEMANTIC_CLASSES_MODE,
+                                     detection_drop_rate=0.0,
                                      point_ang_sigma=POINT_ANG_SIGMA, point_range_sigma=POINT_RANGE_SIGMA,
-                                     point_ang_gate=POINT_ANG_GATE, point_max_range_diff=POINT_MAX_RANGE_DIFF):
+                                     point_ang_gate=POINT_ANG_GATE, point_max_range_diff=POINT_MAX_RANGE_DIFF,
+                                     segment_chunk=4096,
+                                     profile_runtime=False,
+                                     profile_warmup_frames=0):
     os.makedirs(os.path.join(output_folder, "particles"), exist_ok=True)
+    if semantic_classes not in ("both", "poles", "trunks"):
+        raise ValueError(f"Unsupported semantic class mode: {semantic_classes}")
+    detection_drop_rate = float(detection_drop_rate)
+    if detection_drop_rate < 0.0 or detection_drop_rate > 1.0:
+        raise ValueError(f"detection_drop_rate must be within [0, 1], got {detection_drop_rate}")
     df_data = load_csv_with_utm(csv_data_path)
     grouped_map_points, center = load_landmarks_as_lines(geojson_path)
 
@@ -1569,16 +1735,42 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         'num_background_used',
         'num_observations',
         'semantic_model_used',
+        'semantic_classes_mode',
         'gps_enabled',
         'semantic_enabled',
         'corridor_enabled',
         'background_enabled',
         'dynamic_gps_enabled',
         'pose_smoothing_enabled',
+        'detection_drop_rate',
+        'detections_raw',
+        'detections_kept',
+        'detections_dropped',
     ]
     CSV_OUTPUT_PATH = os.path.join(output_folder, "stats.csv")
+    if semantic_classes == "poles":
+        semantic_enabled_classes = {2}
+    elif semantic_classes == "trunks":
+        semantic_enabled_classes = {4}
+    else:
+        semantic_enabled_classes = {2, 4}
+
+    grouped_semantic_points = filter_grouped_map_points_by_classes(
+        grouped_map_points, semantic_enabled_classes
+    )
+
+    # Corridor always uses full map geometry; semantic can be class-filtered for ablations.
     seg_p1, seg_p2, seg_v2, seg_cls = build_segment_tensors(grouped_map_points, device=device)
-    point_poles, point_trunks = build_point_tensors(grouped_map_points, device=device)
+    sem_seg_p1, sem_seg_p2, sem_seg_v2, sem_seg_cls = build_segment_tensors(
+        grouped_semantic_points, device=device
+    )
+    point_poles, point_trunks = build_point_tensors(grouped_semantic_points, device=device)
+
+    class_weights = dict(CLASS_WEIGHTS)
+    if semantic_classes == "poles":
+        class_weights[4] = 0.0
+    elif semantic_classes == "trunks":
+        class_weights[2] = 0.0
     weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
     
     # Write the header to the CSV file once at the beginning
@@ -1589,13 +1781,17 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     # Main loop over the CSV file rows
     pbar = tqdm(df_data.iterrows(), total=df_data.shape[0], desc="Processing frames")
     processed_frames = 0
+    runtime_rows = []
     for frame_idx, row in pbar:
         if frame_idx % FRAME_STRIDE != 0:
             continue
         if max_frames is not None and processed_frames >= max_frames:
             break
+        frame_timing = {k: 0.0 for k in RUNTIME_STAGE_FIELDS} if profile_runtime else None
+        frame_total_t0 = time.perf_counter() if profile_runtime else None
         
         # --- Load images ---
+        io_t0 = time.perf_counter() if profile_runtime else None
         rgb_path = os.path.join(rgb_dir, row['rgb_image'])
         depth_path = os.path.join(depth_dir, row['depth_image'])
         lidar_path = os.path.join(lidar_dir, row['lidar_csv'])
@@ -1609,11 +1805,17 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED) # Assumes 16-bit PNG/TIFF
         lidar_frame = load_lidar_frame_from_csv(lidar_path, LIDAR_RANGE)
 
+        if profile_runtime and io_t0 is not None:
+            frame_timing["io_sec"] += (time.perf_counter() - io_t0)
+
         if color_img is None or depth_img is None:
             print(f"Warning: Failed to load images for index {frame_idx}. Skipping.")
             continue
 
         # --- YOLO Semantic Detection ---
+        if profile_runtime:
+            _sync_cuda_for_timing(True)
+            semantic_t0 = time.perf_counter()
         results = yolo.predict(color_img, conf=0.2, classes=CLASS_IDS, verbose=False)[0]
         bev_poles_obs, bev_trunks_obs = [], []
         overlay = color_img.copy()
@@ -1678,8 +1880,18 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         else:
             # No masks found: reset overlay to raw image
             overlay = color_img.copy()
+        detections_raw = int(len(semantic_centers))
+        if detection_drop_rate > 0.0 and detections_raw > 0:
+            keep_mask = np.random.random(detections_raw) >= detection_drop_rate
+            semantic_centers = [semantic_centers[i] for i, keep in enumerate(keep_mask) if keep]
+        detections_kept = int(len(semantic_centers))
+        detections_dropped = int(detections_raw - detections_kept)
+        if profile_runtime:
+            _sync_cuda_for_timing(True)
+            frame_timing["semantic_inference_sec"] += (time.perf_counter() - semantic_t0)
 
         # --- Use semantic circles to label LiDAR beams ---
+        lidar_assoc_t0 = time.perf_counter() if profile_runtime else None
         bev_poles_obs_lidar, bev_trunks_obs_lidar, background_lidar = [], [], []
 
         if semantic_centers and lidar_frame is not None and 'xy' in lidar_frame:
@@ -1729,6 +1941,8 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
 
                 if bg_points.size > 0:
                     background_lidar = bg_points.tolist()
+        if profile_runtime and lidar_assoc_t0 is not None:
+            frame_timing["lidar_association_sec"] += (time.perf_counter() - lidar_assoc_t0)
         """
         if len(bev_poles_obs) + len(bev_trunks_obs) > 0:
             # Prepare BEV visualization image
@@ -1762,9 +1976,14 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         #"""
         ##################################################################
         # Convert to numpy arrays
-        bev_poles_obs = np.array(bev_poles_obs_lidar)
-        bev_trunks_obs = np.array(bev_trunks_obs_lidar)
-        bev_background_obs = np.array(background_lidar)
+        bev_poles_obs = np.asarray(bev_poles_obs_lidar, dtype=np.float32).reshape(-1, 2) if len(bev_poles_obs_lidar) else np.empty((0, 2), dtype=np.float32)
+        bev_trunks_obs = np.asarray(bev_trunks_obs_lidar, dtype=np.float32).reshape(-1, 2) if len(bev_trunks_obs_lidar) else np.empty((0, 2), dtype=np.float32)
+        bev_background_obs = np.asarray(background_lidar, dtype=np.float32).reshape(-1, 2) if len(background_lidar) else np.empty((0, 2), dtype=np.float32)
+
+        if semantic_classes == "poles":
+            bev_trunks_obs = np.empty((0, 2), dtype=np.float32)
+        elif semantic_classes == "trunks":
+            bev_poles_obs = np.empty((0, 2), dtype=np.float32)
 
         # Get GPS data for current frame (used for measurement update)
         gps_x = row["utm_easting"] - center[0]
@@ -1773,6 +1992,7 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         gps_y_noisy = row["utm_northing_noisy"] - center[1]
 
         # Get odometry data for the current frame
+        motion_t0 = time.perf_counter() if profile_runtime else None
         current_odom_pos_x = row['odom_pos_x'] 
         current_odom_pos_y = row['odom_pos_y']
         current_odom_yaw = quaternion_to_yaw(
@@ -1798,7 +2018,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
         prev_odom_pos_x = current_odom_pos_x
         prev_odom_pos_y = current_odom_pos_y
         prev_odom_yaw = current_odom_yaw
+        if profile_runtime and motion_t0 is not None:
+            frame_timing["motion_update_sec"] += (time.perf_counter() - motion_t0)
 
+        if profile_runtime:
+            _sync_cuda_for_timing(True)
+            measurement_t0 = time.perf_counter()
         weights, frame_stats = measurement_likelihood_gpu(
             grouped_map_points,   # not used (kept for signature parity)
             bev_poles_obs,
@@ -1811,11 +2036,12 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             gps_xy=(gps_x_noisy, gps_y_noisy) if not disable_gps else None,
             gps_sigma=GPS_SIGMA,
             seg_p1=seg_p1, seg_p2=seg_p2, seg_v2=seg_v2, seg_cls=seg_cls,
+            sem_seg_p1=sem_seg_p1, sem_seg_p2=sem_seg_p2, sem_seg_v2=sem_seg_v2, sem_seg_cls=sem_seg_cls,
             point_poles=point_poles, point_trunks=point_trunks,
             sensor_range=SENSOR_RANGE,
-            class_weights=CLASS_WEIGHTS,
+            class_weights=class_weights,
             device=device,
-            segment_chunk=4096,   # adjust if you have many segments / limited VRAM
+            segment_chunk=max(32, int(segment_chunk)),
             max_background_obs=BACKGROUND_OBS_MAX,
             background_class_weight=BACKGROUND_CLASS_WEIGHT,
             corridor_weight=CORRIDOR_WEIGHT,
@@ -1832,31 +2058,29 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
             point_ang_gate=point_ang_gate,
             point_max_range_diff=point_max_range_diff,
         )
+        if profile_runtime:
+            _sync_cuda_for_timing(True)
+            frame_timing["measurement_update_sec"] += (time.perf_counter() - measurement_t0)
         frame_stats['frame_idx'] = frame_idx
         frame_stats['pose_smoothing_enabled'] = int(not disable_pose_smoothing)
+        frame_stats['semantic_classes_mode'] = str(semantic_classes)
+        frame_stats['detection_drop_rate'] = float(detection_drop_rate)
+        frame_stats['detections_raw'] = int(detections_raw)
+        frame_stats['detections_kept'] = int(detections_kept)
+        frame_stats['detections_dropped'] = int(detections_dropped)
+        stats_write_t0 = time.perf_counter() if profile_runtime else None
         with open(CSV_OUTPUT_PATH, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=stats_fieldnames)
             writer.writerow(frame_stats)
+        if profile_runtime and stats_write_t0 is not None:
+            frame_timing["stats_write_sec"] += (time.perf_counter() - stats_write_t0)
 
+        pose_post_t0 = time.perf_counter() if profile_runtime else None
         if np.sum(weights) > 0:
             weights /= np.sum(weights)
         else:
             # Handle case of zero weights, e.g., re-initialize or assign uniform weights
             weights = np.ones(len(particles), dtype=np.float64) / len(particles)
-
-        #""" Visualize overlap for best particle
-        if visualize:
-            highest_weight_index = np.argmax(weights)
-            best_particle = particles[highest_weight_index]
-            if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
-                visualize_particle_overlap(
-                    frame_idx, overlay, best_particle,
-                    bev_poles_obs, bev_trunks_obs, bev_background_obs,
-                    grouped_map_points,
-                    output_folder,
-                    sensor_range=SENSOR_RANGE
-                )
-        #"""
 
         est_pose_raw = estimate_pose_from_particles(particles, weights)
         if disable_pose_smoothing:
@@ -1886,26 +2110,72 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
                 )
             pose_out = pose_smoothed.copy()
 
-        # Store full pose data for TUM export, using frame_idx as the timestamp
-        frame_ts = float(row["timestamp"]) if "timestamp" in row else float(frame_idx)
+        # Prefer dataset timestamps if available; otherwise fall back to frame index.
+        if "timestamp" in row and pd.notna(row["timestamp"]):
+            frame_ts = float(row["timestamp"])
+        elif "timestamp_sec" in row and pd.notna(row["timestamp_sec"]):
+            frame_ts = float(row["timestamp_sec"])
+        else:
+            frame_ts = float(frame_idx)
         full_trajectory_data.append((frame_ts, pose_out[0], pose_out[1], pose_out[2]))
         gps_trajectory.append((gps_x, gps_y))
         gps_gt_trajectory.append((frame_ts, gps_x, gps_y, 0.0))
         noisy_gps_trajectory.append((frame_ts, gps_x_noisy, gps_y_noisy, 0))
+        if profile_runtime and pose_post_t0 is not None:
+            frame_timing["pose_post_sec"] += (time.perf_counter() - pose_post_t0)
 
+        #""" Visualize overlap for best particle
+        if visualize:
+            vis_t0 = time.perf_counter() if profile_runtime else None
+            highest_weight_index = np.argmax(weights)
+            best_particle = particles[highest_weight_index]
+            if bev_poles_obs.size > 0 or bev_trunks_obs.size > 0:
+                visualize_particle_overlap(
+                    frame_idx, overlay, best_particle,
+                    bev_poles_obs, bev_trunks_obs, bev_background_obs,
+                    grouped_map_points,
+                    output_folder,
+                    sensor_range=SENSOR_RANGE
+                )
+            if profile_runtime and vis_t0 is not None:
+                frame_timing["visualization_sec"] += (time.perf_counter() - vis_t0)
+        #"""
+
+        resample_t0 = time.perf_counter() if profile_runtime else None
         particles = adaptive_resample(particles, weights)
         weights = np.full(len(particles), 1.0 / len(particles), dtype=np.float64)
+        if profile_runtime and resample_t0 is not None:
+            frame_timing["resample_sec"] += (time.perf_counter() - resample_t0)
 
         # Create a simple list of (x, y) for the visualization function
         trajectory_xy = [(t[1], t[2]) for t in full_trajectory_data]
 
         if visualize:
+            vis_t0 = time.perf_counter() if profile_runtime else None
             visualize_particles(
                 grouped_map_points,
                 particles, frame_idx,
                 output_folder, trajectory_xy, gps_trajectory,
                 rgb_overlay=overlay
             )
+            if profile_runtime and vis_t0 is not None:
+                frame_timing["visualization_sec"] += (time.perf_counter() - vis_t0)
+
+        if profile_runtime and frame_total_t0 is not None and frame_timing is not None:
+            frame_total_sec = time.perf_counter() - frame_total_t0
+            frame_hz = (1.0 / frame_total_sec) if frame_total_sec > 1e-12 else 0.0
+            if processed_frames >= max(0, int(profile_warmup_frames)):
+                recorded = {
+                    "frame_idx": int(frame_idx),
+                    "processed_idx": int(processed_frames),
+                    "frame_total_sec": float(frame_total_sec),
+                    "frame_hz": float(frame_hz),
+                }
+                for stage_name in RUNTIME_STAGE_FIELDS:
+                    recorded[stage_name] = float(frame_timing.get(stage_name, 0.0))
+                accounted = sum(recorded[s] for s in RUNTIME_STAGE_FIELDS)
+                recorded["other_sec"] = float(max(0.0, frame_total_sec - accounted))
+                runtime_rows.append(recorded)
         processed_frames += 1
 
     # --- After loop, save trajectory to TUM file ---
@@ -1917,6 +2187,16 @@ def process_data_with_localization(csv_data_path, rgb_dir, depth_dir, lidar_dir,
     tum_filename = f"gps_pose.tum"
     tum_output_path = os.path.join(tum_output_dir, tum_filename)
     save_tum_trajectory(gps_gt_trajectory, tum_output_path)
+
+    if profile_runtime:
+        write_runtime_profile(
+            output_folder=output_folder,
+            runtime_rows=runtime_rows,
+            stage_fields=RUNTIME_STAGE_FIELDS,
+            warmup_frames=max(0, int(profile_warmup_frames)),
+            total_processed_frames=processed_frames,
+            frame_stride=FRAME_STRIDE,
+        )
 
 
 if __name__ == "__main__":
@@ -1939,6 +2219,10 @@ if __name__ == "__main__":
                         help='Optional cap on processed frames after stride filtering.')
     parser.add_argument('--no-visualization', action='store_true',
                         help='Disable overlap/particle image generation for faster tuning.')
+    parser.add_argument('--profile-runtime', action='store_true',
+                        help='Write per-frame runtime breakdown and summary JSON for reviewer reporting.')
+    parser.add_argument('--profile-warmup-frames', type=int, default=20,
+                        help='Number of initial processed frames excluded from runtime statistics.')
     parser.add_argument('--semantic-sigma', type=float, default=SEMANTIC_SIGMA,
                         help='Semantic range likelihood sigma.')
     parser.add_argument('--gps-sigma', type=float, default=GPS_SIGMA,
@@ -1977,6 +2261,10 @@ if __name__ == "__main__":
                         help='Disable final pose smoothing and export raw particle estimates.')
     parser.add_argument('--semantic-model', choices=['wall', 'point'], default=SEMANTIC_MODEL,
                         help='Semantic matching model: wall segments or individual points.')
+    parser.add_argument('--semantic-classes', choices=['both', 'poles', 'trunks'], default=SEMANTIC_CLASSES_MODE,
+                        help='Semantic classes used by the semantic likelihood ablation.')
+    parser.add_argument('--detection-drop-rate', type=float, default=0.0,
+                        help='Probability in [0,1] of dropping each semantic detection before LiDAR association.')
     parser.add_argument('--point-ang-sigma', type=float, default=POINT_ANG_SIGMA,
                         help='Angular sigma (rad) for point-based semantic matching.')
     parser.add_argument('--point-range-sigma', type=float, default=POINT_RANGE_SIGMA,
@@ -1985,6 +2273,14 @@ if __name__ == "__main__":
                         help='Angular gating threshold (rad) for point-based matching candidates.')
     parser.add_argument('--point-max-range-diff', type=float, default=POINT_MAX_RANGE_DIFF,
                         help='Maximum range residual (m) gate for point-based matching candidates.')
+    parser.add_argument('--segment-chunk', type=int, default=4096,
+                        help='Wall-model segment chunk size for GPU intersection batches.')
+    parser.add_argument('--data-path', type=str, default=str(DEFAULT_DATA_PATH),
+                        help='Dataset root containing data.csv, rgb/, depth/, and lidar/.')
+    parser.add_argument('--csv-data-path', type=str, default=None,
+                        help='Optional explicit CSV path. Defaults to <data-path>/data.csv.')
+    parser.add_argument('--geojson-path', type=str, default=str(geojson_path),
+                        help='GeoJSON map file used to build vineyard rows.')
     args = parser.parse_args()
 
     if args.require_cuda and not torch.cuda.is_available():
@@ -2006,10 +2302,38 @@ if __name__ == "__main__":
     EXPECTED_OBS_COUNT = max(1.0, float(args.expected_obs_count))
     PARTICLE_COUNT = max(10, int(args.particle_count))
     SEMANTIC_MODEL = str(args.semantic_model)
+    SEMANTIC_CLASSES_MODE = str(args.semantic_classes)
     POINT_ANG_SIGMA = max(1e-6, float(args.point_ang_sigma))
     POINT_RANGE_SIGMA = max(1e-6, float(args.point_range_sigma))
     POINT_ANG_GATE = max(0.0, float(args.point_ang_gate))
     POINT_MAX_RANGE_DIFF = max(0.0, float(args.point_max_range_diff))
+    SEGMENT_CHUNK = max(32, int(args.segment_chunk))
+    DETECTION_DROP_RATE = float(args.detection_drop_rate)
+    if DETECTION_DROP_RATE < 0.0 or DETECTION_DROP_RATE > 1.0:
+        raise ValueError(f"--detection-drop-rate must be within [0,1], got {DETECTION_DROP_RATE}")
+
+    data_path = Path(args.data_path).expanduser()
+    if not data_path.is_absolute():
+        data_path = (base_dir / data_path).resolve()
+    if args.csv_data_path:
+        csv_data_path = Path(args.csv_data_path).expanduser()
+        if not csv_data_path.is_absolute():
+            csv_data_path = (base_dir / csv_data_path).resolve()
+    else:
+        csv_data_path = data_path / "data.csv"
+
+    geojson_path = Path(args.geojson_path).expanduser()
+    if not geojson_path.is_absolute():
+        geojson_path = (base_dir / geojson_path).resolve()
+
+    if not csv_data_path.exists():
+        raise FileNotFoundError(f"Missing dataset CSV: {csv_data_path}")
+    for sub in ("rgb", "depth", "lidar"):
+        subdir = data_path / sub
+        if not subdir.exists():
+            raise FileNotFoundError(f"Missing dataset folder: {subdir}")
+    if not geojson_path.exists():
+        raise FileNotFoundError(f"Missing map geojson: {geojson_path}")
 
     if args.output_folder:
         output_folder = args.output_folder
@@ -2020,17 +2344,21 @@ if __name__ == "__main__":
         f"[INFO] Running with Miss Penalty: {args.miss_penalty}, "
         f"Wrong Hit Penalty: {args.wrong_hit_penalty}, GPS Weight: {args.gps_weight}, "
         f"Seed: {args.seed}, Output: {output_folder}, "
+        f"DataPath: {data_path}, CSV: {csv_data_path}, "
         f"Stride: {FRAME_STRIDE}, MaxFrames: {args.max_frames}, Visualize: {not args.no_visualization}, "
         f"Model: {SEMANTIC_MODEL}, DisableGPS: {args.disable_gps}, DisableSemantic: {args.disable_semantic}, "
         f"DisableCorridor: {args.disable_corridor}, DisableBackground: {args.disable_background}, "
-        f"StaticGPSWeight: {args.disable_dynamic_gps_weight}, DisablePoseSmooth: {args.disable_pose_smoothing}"
+        f"StaticGPSWeight: {args.disable_dynamic_gps_weight}, DisablePoseSmooth: {args.disable_pose_smoothing}, "
+        f"SemanticClasses: {SEMANTIC_CLASSES_MODE}, DetectionDropRate: {DETECTION_DROP_RATE}, "
+        f"SegmentChunk: {SEGMENT_CHUNK}, "
+        f"ProfileRuntime: {args.profile_runtime}, ProfileWarmup: {max(0, int(args.profile_warmup_frames))}"
     )
 
     process_data_with_localization(
-        csv_data_path=CSV_DATA_PATH,
-        rgb_dir=DATA_PATH,
-        depth_dir=DATA_PATH,
-        lidar_dir=DATA_PATH,
+        csv_data_path=str(csv_data_path),
+        rgb_dir=str(data_path),
+        depth_dir=str(data_path),
+        lidar_dir=str(data_path),
         miss_penalty=args.miss_penalty,
         wrong_hit_penalty=args.wrong_hit_penalty,
         gps_weight=args.gps_weight,
@@ -2044,9 +2372,14 @@ if __name__ == "__main__":
         disable_dynamic_gps_weight=bool(args.disable_dynamic_gps_weight),
         disable_pose_smoothing=bool(args.disable_pose_smoothing),
         semantic_model=SEMANTIC_MODEL,
+        semantic_classes=SEMANTIC_CLASSES_MODE,
+        detection_drop_rate=DETECTION_DROP_RATE,
         point_ang_sigma=POINT_ANG_SIGMA,
         point_range_sigma=POINT_RANGE_SIGMA,
         point_ang_gate=POINT_ANG_GATE,
         point_max_range_diff=POINT_MAX_RANGE_DIFF,
+        segment_chunk=SEGMENT_CHUNK,
+        profile_runtime=bool(args.profile_runtime),
+        profile_warmup_frames=max(0, int(args.profile_warmup_frames)),
     )
     print("[INFO] Finished processing all frames from the CSV file.")

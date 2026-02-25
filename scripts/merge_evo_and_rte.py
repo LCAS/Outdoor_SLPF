@@ -1,39 +1,35 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import zipfile, json, csv
+import csv
+import os
 import pandas as pd
 
 base = Path(__file__).parent.parent
-results = base / 'results'
+results_override = os.environ.get('RESULTS_DIR')
+if results_override:
+    results = Path(results_override)
+    if not results.is_absolute():
+        results = base / results
+else:
+    results = base / 'results'
 
-# map method names between our CSV and evo files
-method_map = {
-    'SPF LiDAR': 'SPF',
-    'SPF LiDAR++': 'SPFPP',
-    'Noisy GPS': 'NoisyGPS',
-    'AMCL': 'AMCL',
-    'RTABMap RGBD': 'RTAB_RGBD',
-    'RTABMap RGB': 'RTAB_RGB'
+# map display names to method keys used in evo_aggregated_metrics.csv
+method_key_map = {
+    'SPF LiDAR': 'spf',
+    'SPF LiDAR++': 'spfpp',
+    'Noisy GPS': 'ngps',
+    'AMCL': 'amcl',
+    'RTABMap RGBD': 'rtab_rgbd',
+    'RTABMap RGB': 'rtab_rgb'
 }
 
-evo_files = {v: results / f'evo_{k.lower()}_raw.json' for k, v in [('spf','SPF'), ('spfpp','SPFPP'), ('ngps','NoisyGPS'), ('amcl','AMCL'), ('rtab_rgbd','RTAB_RGBD'), ('rtab_rgb','RTAB_RGB')]}
-# fallback to previously-saved names if raw absent
-for k in list(evo_files.keys()):
-    if not evo_files[k].exists():
-        # try umey file names
-        evo_files[k] = results / evo_files[k].name.replace('_raw','_umey')
-
-# read our RTE CSV
+# read row-based metrics CSV
 rte_df = pd.read_csv(results / 'trajectory_metrics.csv')
-# build dict method -> rte values
+# build dict method -> row adherence values
 rte_map = {}
 for _, row in rte_df.iterrows():
     method = row['method']
     rte_map[method] = {
-        # prefer Umeyama-aligned RTE columns (consistent with compute_metrics PDF)
-        'rte2': row.get('rte_2m_umey_rmse') or row.get('rte_2m_rmse'),
-        'rte5': row.get('rte_5m_umey_rmse') or row.get('rte_5m_rmse'),
-        'rte10': row.get('rte_10m_umey_rmse') or row.get('rte_10m_rmse'),
         'cross_track_mean': row.get('cross_track_mean'),
         'row_correct_fraction': row.get('row_correct_fraction'),
         'row_switch_events': row.get('row_switch_events')
@@ -41,55 +37,45 @@ for _, row in rte_df.iterrows():
 
 out_rows = []
 
-# Pre-scan all evo archives and extract their info/stats to map to methods robustly
-file_info = {}
-for p in results.glob('evo_*json'):
-    try:
-        with zipfile.ZipFile(p, 'r') as z:
-            info = None
-            stats = None
-            if 'info.json' in z.namelist():
-                info = json.loads(z.read('info.json'))
-            if 'stats.json' in z.namelist():
-                stats = json.loads(z.read('stats.json'))
-            file_info[p] = {'info': info, 'stats': stats}
-    except Exception:
-        # not a zip archive or unreadable; skip
-        continue
+# Read evo aggregate metrics to get deterministic ATE values
+evo_csv_path = results / 'evo_aggregated_metrics.csv'
+if not evo_csv_path.exists():
+    raise FileNotFoundError(f'Missing {evo_csv_path}. Run scripts/aggregate_evo_results.py first.')
 
-# keywords to match archives to methods
-keywords = {
-    'SPF LiDAR': ['spf', 'spf_lidar'],
-    'SPF LiDAR++': ['spfpp', 'spf_lidar++', 'trajectory_0.5'],
-    'Noisy GPS': ['ngps', 'noisy', 'noisy_gnss', 'noisy-gps'],
-    'AMCL': ['amcl'],
-    'RTABMap RGBD': ['rtabmap_rgbd', 'rgbd'],
-    'RTABMap RGB': ['rtabmap_rgb', 'rgb']
-}
+evo_df = pd.read_csv(evo_csv_path)
+evo_map = {}
+for _, row in evo_df.iterrows():
+    key = str(row.get('method_key', '')).strip().lower()
+    if key:
+        evo_map[key] = row
 
 method_list = ['SPF LiDAR', 'SPF LiDAR++', 'Noisy GPS', 'AMCL', 'RTABMap RGBD', 'RTABMap RGB']
 
 for method in method_list:
-    ate_rmse = None
-    # search file_info for matching keywords in info.ref_name or info.est_name or filename
-    for p, vals in file_info.items():
-        info = vals.get('info') or {}
-        stats = vals.get('stats') or {}
-        hay = ' '.join([p.name, str(info.get('ref_name','')), str(info.get('est_name','')), info.get('title','')]).lower()
-        for kw in keywords.get(method, []):
-            if kw in hay:
-                ate_rmse = stats.get('rmse') if stats else None
-                break
-        if ate_rmse is not None:
-            break
+    key = method_key_map.get(method)
+    evo_row = evo_map.get(key, {})
+    ate_rmse = evo_row.get('ape_umey_rmse')
+    if pd.isna(ate_rmse):
+        ate_rmse = evo_row.get('ape_raw_rmse')
+    if pd.isna(ate_rmse):
+        ate_rmse = None
+    rte2 = evo_row.get('rpe_2m_rmse')
+    if pd.isna(rte2):
+        rte2 = None
+    rte5 = evo_row.get('rpe_5m_rmse')
+    if pd.isna(rte5):
+        rte5 = None
+    rte10 = evo_row.get('rpe_10m_rmse')
+    if pd.isna(rte10):
+        rte10 = None
 
     rte_vals = rte_map.get(method, {})
     out_rows.append({
         'method': method,
         'ate_evo_rmse': ate_rmse,
-        'rte2_evo_rmse': rte_vals.get('rte2'),
-        'rte5_evo_rmse': rte_vals.get('rte5'),
-        'rte10_evo_rmse': rte_vals.get('rte10'),
+        'rte2_evo_rmse': rte2,
+        'rte5_evo_rmse': rte5,
+        'rte10_evo_rmse': rte10,
         'cross_track_mean': rte_vals.get('cross_track_mean'),
         'row_correct_fraction': rte_vals.get('row_correct_fraction'),
         'row_switch_events': rte_vals.get('row_switch_events')

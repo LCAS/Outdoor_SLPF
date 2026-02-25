@@ -9,9 +9,16 @@ from pathlib import Path
 import zipfile
 import json
 import csv
+import os
 
 BASE = Path(__file__).parent.parent
-RESULTS = BASE / 'results'
+RESULTS_OVERRIDE = os.environ.get('RESULTS_DIR')
+if RESULTS_OVERRIDE:
+    RESULTS = Path(RESULTS_OVERRIDE)
+    if not RESULTS.is_absolute():
+        RESULTS = BASE / RESULTS
+else:
+    RESULTS = BASE / 'results'
 
 
 def parse_evo_archive(path: Path):
@@ -27,6 +34,8 @@ def parse_evo_archive(path: Path):
 def main():
     files = list(RESULTS.glob('evo_*.json'))
     rows = {}
+    allowed_methods_csv = os.environ.get('EVO_METHODS', '').strip()
+    allowed_methods = {m.strip() for m in allowed_methods_csv.split(',') if m.strip()} if allowed_methods_csv else None
 
     for f in files:
         parsed = parse_evo_archive(f)
@@ -51,6 +60,8 @@ def main():
                 continue
 
         method_key = '_'.join(parts[1:idx])
+        if allowed_methods is not None and method_key not in allowed_methods:
+            continue
         tail = parts[idx+1:]
         if method_key not in rows:
             rows[method_key] = {}
@@ -115,8 +126,13 @@ def main():
                 'spfpp': 'SPF LiDAR++',
                 'ngps': 'Noisy GPS',
                 'amcl': 'AMCL',
+                'amcl_ngps': 'AMCL+GPS',
                 'rtab_rgbd': 'RTABMap RGBD',
-                'rtab_rgb': 'RTABMap RGB'
+                'rtab_rgb': 'RTABMap RGB',
+                'orb_rgbd_s4': 'ORB-SLAM3 RGBD (s4)',
+                'orb_rgbd_full': 'ORB-SLAM3 RGBD (full)',
+                'orb_mono_s4': 'ORB-SLAM3 Mono (s4)',
+                'orb_mono_full': 'ORB-SLAM3 Mono (full)'
             }
             human = key_map.get(k)
             if human and human in row_metrics:
@@ -165,8 +181,13 @@ def main():
                 'spfpp': 'SPF LiDAR++',
                 'ngps': 'Noisy GPS',
                 'amcl': 'AMCL',
+                'amcl_ngps': 'AMCL+GPS',
                 'rtab_rgbd': 'RTABMap RGBD',
-                'rtab_rgb': 'RTABMap RGB'
+                'rtab_rgb': 'RTABMap RGB',
+                'orb_rgbd_s4': 'ORB-SLAM3 RGBD (s4)',
+                'orb_rgbd_full': 'ORB-SLAM3 RGBD (full)',
+                'orb_mono_s4': 'ORB-SLAM3 Mono (s4)',
+                'orb_mono_full': 'ORB-SLAM3 Mono (full)'
             }
             human = key_map.get(k)
             rm = row_metrics.get(human, {}) if human else {}

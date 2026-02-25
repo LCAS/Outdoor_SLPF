@@ -35,7 +35,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
-from pyproj import Transformer
+
+from geojson_rows import iter_projected_points
 
 
 BASE_DIR = Path(__file__).parent.parent
@@ -209,27 +210,9 @@ def load_rows_from_geojson(path: Path, target_crs: str = "epsg:32630") -> Dict[s
     if not path.exists():
         raise FileNotFoundError(path)
 
-    transformer = Transformer.from_crs("epsg:4326", target_crs, always_xy=True)
-    with open(path, "r") as f:
-        data = json.load(f)
-
     records = []
-    for feat in data.get("features", []):
-        geom = feat.get("geometry") or {}
-        if geom.get("type") != "Point":
-            continue
-        coords = geom.get("coordinates", [])
-        if len(coords) < 2:
-            continue
-        lon, lat = coords[0], coords[1]
-        x, y = transformer.transform(lon, lat)
-        props = feat.get("properties", {})
-        row_id = props.get("vine_vine_row_id") or ""
-        if not row_id:
-            row_post_id = props.get("row_post_id", "")
-            row_id = row_post_id.rsplit("_post_", 1)[0] if "_post_" in row_post_id else row_post_id
-        row_id = row_id or "unknown"
-        records.append((x, y, row_id))
+    for item in iter_projected_points(path, target_crs=target_crs):
+        records.append((item["x"], item["y"], item["row_id"]))
 
     if not records:
         raise ValueError("No row points found in geojson")

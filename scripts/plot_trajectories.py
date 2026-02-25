@@ -242,6 +242,7 @@ def plot_trajectory_with_error_colors(
     fixed_xlim=None,
     fixed_ylim=None,
     show_ylabel=True,
+    show_start_end=False,
 ):
     """
     Plot a trajectory with colors representing errors, overlay its GPS ground truth path,
@@ -270,6 +271,30 @@ def plot_trajectory_with_error_colors(
         ax.plot(gt_xy[:, 0], gt_xy[:, 1], color='gray', linestyle='--', linewidth=1.5, label='GPS ground truth')
     else:
         gt_xy = np.empty((0, 2))
+
+    if show_start_end and len(points) > 0:
+        ax.scatter(
+            points[0, 0],
+            points[0, 1],
+            s=40,
+            marker='o',
+            color='limegreen',
+            edgecolor='black',
+            linewidth=0.6,
+            zorder=6,
+            label='Robot start',
+        )
+        ax.scatter(
+            points[-1, 0],
+            points[-1, 1],
+            s=48,
+            marker='X',
+            color='crimson',
+            edgecolor='black',
+            linewidth=0.6,
+            zorder=6,
+            label='Robot end',
+        )
 
     extra_points = []
     if landmark_points is not None:
@@ -349,6 +374,7 @@ def main():
     noisy_gps_stride = int(os.environ.get('NOISY_GPS_STRIDE', '4'))
     use_scale_alignment = os.environ.get('PLOT_USE_SCALE_ALIGNMENT', '1') != '0'
     show_landmarks = os.environ.get('PLOT_SHOW_LANDMARKS', '0') == '1'
+    show_start_end = os.environ.get('PLOT_SHOW_START_END', '0') == '1'
     method_labels_csv = os.environ.get('PLOT_METHOD_LABELS', '').strip()
 
     amcl_ngps_traj_candidates = [
@@ -571,6 +597,7 @@ def main():
             vmin=v_min,
             vmax=v_max,
             show_ylabel=is_left_col,
+            show_start_end=show_start_end,
         )
 
     for idx in range(len(plot_data), len(axes)):
