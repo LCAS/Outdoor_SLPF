@@ -1,0 +1,12 @@
+{
+  "seed": 22,
+  "gt_time_used": 1756812926.2363498,
+  "translation_applied_xyz": [
+    -20.756095752837933,
+    37.66460688055673,
+    0.0
+  ],
+  "ape_rmse_no_extra_align": 42.93813402632615,
+  "ape_mean_no_extra_align": 37.55966986734346,
+  "ape_median_no_extra_align": 37.41663115886508
+}

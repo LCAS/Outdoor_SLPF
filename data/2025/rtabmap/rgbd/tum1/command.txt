@@ -1,0 +1,3 @@
+evo_traj tum rtabmap.tum -v --transform_right transform.json --save_as_tum
+evo_ape tum gps_pose.tum rtabmap.tum --t_max_diff 10 --align_origin --plot_mode xy --plot
+evo_rpe tum gps_pose.tum rtabmap.tum --t_max_diff 10 --align_origin --plot_mode xy --plot

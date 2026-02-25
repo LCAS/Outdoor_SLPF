@@ -1,0 +1,8 @@
+{
+  "best_seed": 22,
+  "best_rmse": 3.2915115090447165,
+  "best_scale": 0.661399999572501,
+  "best_zip": "/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_scale_align/rtab_ngps_s22_ape_as.zip",
+  "metrics_csv": "/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_scale_align/sim3_search_metrics.csv",
+  "sim3_matrix_npy": "/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_scale_align/best_sim3_matrix.npy"
+}
