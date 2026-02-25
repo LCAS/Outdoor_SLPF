@@ -1,0 +1,63 @@
+{
+  "run_dir": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu",
+  "config": {
+    "trials": 3,
+    "seed_base": 11,
+    "frame_stride": 4,
+    "measured_frames": 200,
+    "warmup_frames": 20,
+    "max_frames": 220,
+    "particle_count": 100,
+    "segment_chunk": 4096,
+    "miss_penalty": 4.0,
+    "wrong_hit_penalty": 4.0,
+    "gps_weight": 0.5,
+    "require_cuda": true,
+    "python_exec": "/home/pulver/projects/Outdoor_SLPF/.venv/bin/python",
+    "data_path": "/home/pulver/projects/Outdoor_SLPF/data/2025/rh_run1",
+    "geojson_path": "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson"
+  },
+  "hardware": {
+    "host": {
+      "platform": "Linux-6.17.9-76061709-generic-x86_64-with-glibc2.35",
+      "machine": "x86_64",
+      "python": "3.10.12",
+      "cpu_count_logical": 32,
+      "cpu_model": "AMD Ryzen Threadripper 2950X 16-Core Processor",
+      "memory_total_gb": 62.663875579833984
+    },
+    "nvidia_smi": [
+      {
+        "name": "NVIDIA GeForce RTX 4060 Ti",
+        "driver_version": "580.119.02",
+        "memory_total_mib": "8188"
+      },
+      {
+        "name": "NVIDIA GeForce RTX 3070",
+        "driver_version": "580.119.02",
+        "memory_total_mib": "8192"
+      }
+    ],
+    "torch_runtime": {
+      "torch_version": "2.9.0+cu128",
+      "cuda_available": true,
+      "cuda_version": "12.8",
+      "device_count": 2,
+      "devices": [
+        "NVIDIA GeForce RTX 4060 Ti",
+        "NVIDIA GeForce RTX 3070"
+      ]
+    }
+  },
+  "pipeline_hz": {
+    "processed_frame_hz_mean": 13.044349639943109,
+    "processed_frame_hz_std": 0.20973761353757675,
+    "effective_input_hz_with_stride_mean": 52.177398559772435,
+    "effective_input_hz_with_stride_std": 0.838950454150307
+  },
+  "artifacts": {
+    "trial_metrics_csv": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu/runtime_profile_trials.csv",
+    "component_breakdown_csv": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu/runtime_profile_components.csv",
+    "summary_json": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu/runtime_profile_experiment_summary.json"
+  }
+}

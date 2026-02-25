@@ -1,0 +1,323 @@
+{
+  "run_dir": "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods",
+  "seeds": [
+    11,
+    22,
+    33
+  ],
+  "data_path": "/home/pulver/projects/Outdoor_SLPF/data/2025/rh_run2",
+  "geojson": "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson",
+  "methods": [
+    "SLPF(ours)",
+    "Noisy GPS",
+    "AMCL",
+    "AMCL+NoisyGPS",
+    "RTABMAP RGB",
+    "RTABMAP RGBD"
+  ],
+  "commands": [
+    {
+      "method": "SLPF(ours)",
+      "seed": 11,
+      "command": [
+        "/home/pulver/projects/Outdoor_SLPF/.venv/bin/python",
+        "/home/pulver/projects/Outdoor_SLPF/scripts/spf_lidar.py",
+        "--miss-penalty",
+        "4.0",
+        "--wrong-hit-penalty",
+        "4.0",
+        "--gps-weight",
+        "0.5",
+        "--seed",
+        "11",
+        "--output-folder",
+        "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_11",
+        "--frame-stride",
+        "4",
+        "--semantic-sigma",
+        "0.05",
+        "--gps-sigma",
+        "1.1",
+        "--corridor-weight",
+        "0.30",
+        "--corridor-dist-sigma",
+        "1.50",
+        "--corridor-heading-sigma",
+        "0.35",
+        "--background-class-weight",
+        "0.20",
+        "--max-background-obs",
+        "120",
+        "--expected-obs-count",
+        "150",
+        "--pose-smooth-alpha-pos",
+        "0.55",
+        "--pose-smooth-alpha-theta",
+        "0.50",
+        "--odom-yaw-filter-alpha",
+        "0.90",
+        "--particle-count",
+        "100",
+        "--segment-chunk",
+        "4096",
+        "--no-visualization",
+        "--data-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/2025/rh_run2",
+        "--geojson-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson",
+        "--require-cuda"
+      ],
+      "runtime_sec": 34.53513956069946
+    },
+    {
+      "method": "Noisy GPS",
+      "seed": 11,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/noisy_gps/run2/noisy_gps_seed_11.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_11/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_11/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL",
+      "seed": 11,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/amcl_pose2_1.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_11/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_11/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL+NoisyGPS",
+      "seed": 11,
+      "command": [
+        "kalman_fusion amcl=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_11/trajectory_0.5.tum",
+        "ngps=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_11/trajectory_0.5.tum",
+        "out=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl_ngps/seed_11/trajectory_0.5.tum",
+        "params(amcl_std=0.35,gps_std=1.8,process=0.8)"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGB",
+      "seed": 11,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_1_rtabmap_rgb_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_11/rtabmap_rgb_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_1_odometry_gps_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_11/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGBD",
+      "seed": 11,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_1_rtabmap_rgb_depth_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_11/rtabmap_rgbd_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_1_rtabmap_rgb_depth_odometry_gps_log_.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_11/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "SLPF(ours)",
+      "seed": 22,
+      "command": [
+        "/home/pulver/projects/Outdoor_SLPF/.venv/bin/python",
+        "/home/pulver/projects/Outdoor_SLPF/scripts/spf_lidar.py",
+        "--miss-penalty",
+        "4.0",
+        "--wrong-hit-penalty",
+        "4.0",
+        "--gps-weight",
+        "0.5",
+        "--seed",
+        "22",
+        "--output-folder",
+        "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_22",
+        "--frame-stride",
+        "4",
+        "--semantic-sigma",
+        "0.05",
+        "--gps-sigma",
+        "1.1",
+        "--corridor-weight",
+        "0.30",
+        "--corridor-dist-sigma",
+        "1.50",
+        "--corridor-heading-sigma",
+        "0.35",
+        "--background-class-weight",
+        "0.20",
+        "--max-background-obs",
+        "120",
+        "--expected-obs-count",
+        "150",
+        "--pose-smooth-alpha-pos",
+        "0.55",
+        "--pose-smooth-alpha-theta",
+        "0.50",
+        "--odom-yaw-filter-alpha",
+        "0.90",
+        "--particle-count",
+        "100",
+        "--segment-chunk",
+        "4096",
+        "--no-visualization",
+        "--data-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/2025/rh_run2",
+        "--geojson-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson",
+        "--require-cuda"
+      ],
+      "runtime_sec": 34.71904397010803
+    },
+    {
+      "method": "Noisy GPS",
+      "seed": 22,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/noisy_gps/run2/noisy_gps_seed_22.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_22/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_22/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL",
+      "seed": 22,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/amcl_pose2_2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_22/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_22/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL+NoisyGPS",
+      "seed": 22,
+      "command": [
+        "kalman_fusion amcl=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_22/trajectory_0.5.tum",
+        "ngps=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_22/trajectory_0.5.tum",
+        "out=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl_ngps/seed_22/trajectory_0.5.tum",
+        "params(amcl_std=0.35,gps_std=1.8,process=0.8)"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGB",
+      "seed": 22,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_2_rtabmap_rgb_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/rtabmap_rgb_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_2_odometry_gps_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGBD",
+      "seed": 22,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_2_rtabmap_rgb_depth_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_22/rtabmap_rgbd_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_2_rtabmap_rgb_depth_odometry_gps_log_.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_22/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "SLPF(ours)",
+      "seed": 33,
+      "command": [
+        "/home/pulver/projects/Outdoor_SLPF/.venv/bin/python",
+        "/home/pulver/projects/Outdoor_SLPF/scripts/spf_lidar.py",
+        "--miss-penalty",
+        "4.0",
+        "--wrong-hit-penalty",
+        "4.0",
+        "--gps-weight",
+        "0.5",
+        "--seed",
+        "33",
+        "--output-folder",
+        "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_33",
+        "--frame-stride",
+        "4",
+        "--semantic-sigma",
+        "0.05",
+        "--gps-sigma",
+        "1.1",
+        "--corridor-weight",
+        "0.30",
+        "--corridor-dist-sigma",
+        "1.50",
+        "--corridor-heading-sigma",
+        "0.35",
+        "--background-class-weight",
+        "0.20",
+        "--max-background-obs",
+        "120",
+        "--expected-obs-count",
+        "150",
+        "--pose-smooth-alpha-pos",
+        "0.55",
+        "--pose-smooth-alpha-theta",
+        "0.50",
+        "--odom-yaw-filter-alpha",
+        "0.90",
+        "--particle-count",
+        "100",
+        "--segment-chunk",
+        "4096",
+        "--no-visualization",
+        "--data-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/2025/rh_run2",
+        "--geojson-path",
+        "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson",
+        "--require-cuda"
+      ],
+      "runtime_sec": 34.50494170188904
+    },
+    {
+      "method": "Noisy GPS",
+      "seed": 33,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/noisy_gps/run2/noisy_gps_seed_33.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_33/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_33/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL",
+      "seed": 33,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/amcl_pose2_3.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_33/trajectory_0.5.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/amcl/tum2/gps_pose2.tum -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_33/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "AMCL+NoisyGPS",
+      "seed": 33,
+      "command": [
+        "kalman_fusion amcl=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl/seed_33/trajectory_0.5.tum",
+        "ngps=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_33/trajectory_0.5.tum",
+        "out=/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/amcl_ngps/seed_33/trajectory_0.5.tum",
+        "params(amcl_std=0.35,gps_std=1.8,process=0.8)"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGB",
+      "seed": 33,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_3_rtabmap_rgb_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_33/rtabmap_rgb_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgb/run2/part2_2_9_2025_run_3_odometry_gps_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_33/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    },
+    {
+      "method": "RTABMAP RGBD",
+      "seed": 33,
+      "command": [
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_3_rtabmap_rgb_depth_localization_pose_log.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_33/rtabmap_rgbd_filtered.tum",
+        "copy /home/pulver/projects/Outdoor_SLPF/data/2025/rtabmap/jonathan_3runs_rgbd/run2/part2_2_9_2025_run_3_rtabmap_rgb_depth_odometry_gps_log_.txt -> /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_33/gps_pose.tum"
+      ],
+      "runtime_sec": 0.0
+    }
+  ],
+  "representative_seed": 11,
+  "per_seed_csv": "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/trajectory_metrics_multiseed_per_seed.csv",
+  "aggregate_csv": "/home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/trajectory_metrics_multiseed_aggregate.csv"
+}

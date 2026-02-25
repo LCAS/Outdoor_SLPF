@@ -1,0 +1,47 @@
+% Auto-generated run1 robustness section (single-column compact table).
+% Requires: \usepackage{booktabs}, \usepackage{multirow}, \usepackage{graphicx}
+
+\subsection{Robustness to Detection and Map Degradation}
+\label{sec:robustness_run1}
+We evaluate two stress tests on \texttt{run1}: \emph{(A)} random semantic-detection dropping
+(20\%, 40\%), referred to as \textbf{Detection Dropout (DetDrop)}, and \emph{(B)}
+landmark removal from one contiguous map section (30\%, 50\%), referred to as
+\textbf{Section Landmark Removal (MapRemove)}.
+Table~\ref{tab:robustness_run1} follows the same metrics/protocol used in the main comparison and reports
+mean$\pm$std over three seeds.
+
+\begin{table}[t]
+  \centering
+  \caption{Run1 robustness under Detection Dropout (DetDrop) and Section Landmark Removal (MapRemove). Values are mean$\pm$std over three runs.}
+  \scriptsize
+  \setlength{\tabcolsep}{3.0pt}
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Variant} &
+    \textbf{APE$\downarrow$} &
+    \textbf{RPE 2m$\downarrow$} &
+    \textbf{XTE mean$\downarrow$} &
+    \textbf{Row corr.$\uparrow$} &
+    \textbf{Switches$\downarrow$}\\
+    \midrule
+    Baseline (full map) & \textbf{1.00$\pm$0.03} & \textbf{3.33$\pm$0.02} & 1.31$\pm$0.05 & 0.72$\pm$0.02 & 33.0$\pm$0.8\\
+    \cmidrule(lr){1-6}
+    DetDrop 20\% & 1.02$\pm$0.08 & 3.37$\pm$0.06 & 1.31$\pm$0.05 & 0.73$\pm$0.01 & 33.3$\pm$4.1\\
+    DetDrop 40\% & 1.05$\pm$0.09 & 3.33$\pm$0.04 & \textbf{1.26$\pm$0.05} & \textbf{0.74$\pm$0.03} & \textbf{30.7$\pm$0.9}\\
+    \cmidrule(lr){1-6}
+    MapRemove 30\% & 1.05$\pm$0.04 & 3.37$\pm$0.03 & 1.27$\pm$0.02 & 0.72$\pm$0.01 & 30.3$\pm$2.1\\
+    MapRemove 50\% & 1.13$\pm$0.13 & 3.36$\pm$0.06 & 1.32$\pm$0.02 & 0.72$\pm$0.01 & 31.0$\pm$0.8\\
+    \bottomrule
+  \end{tabular}
+  \label{tab:robustness_run1}
+\end{table}
+
+For Detection Dropout (DetDrop), performance degrades gracefully: APE increases from
+$1.00\pm0.03$\,m (baseline) to $1.02\pm0.08$\,m (20\%) and $1.05\pm0.09$\,m (40\%),
+while row consistency remains stable/slightly improves
+($0.72\pm0.02 \rightarrow 0.73\pm0.01/0.74\pm0.03$) and wrong-row switches stay comparable.
+For Section Landmark Removal (MapRemove), section-level disturbance increases with higher removal
+(section APE: $0.74\pm0.06$\,m at 30\% vs.\ $1.07\pm0.17$\,m at 50\%),
+while post-section performance remains close to baseline
+($0.82\pm0.04$\,m and $0.87\pm0.06$\,m, respectively), with 100\% recovery in all runs
+and mean recovery distance of approximately 12\,m.

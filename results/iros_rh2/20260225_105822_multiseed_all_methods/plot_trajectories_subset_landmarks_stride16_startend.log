@@ -1,0 +1,23 @@
+/home/pulver/projects/Outdoor_SLPF/.venv/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+  warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+Processing SLPF(ours)...
+  Mean error: 0.9440 m
+  Max error: 3.7356 m
+  Min error: 0.0405 m
+Processing AMCL+GPS...
+  Mean error: 1.4223 m
+  Max error: 7.6568 m
+  Min error: 0.0509 m
+Processing RTABMAP RGBD...
+  Start anchored to GT (applied dx=1.0692, dy=4.8567, dz=0.0028)
+  Mean error: 5.9132 m
+  Max error: 14.6674 m
+  Min error: 0.0000 m
+Processing Noisy GPS...
+  Stride applied: every 16 samples
+  Mean error: 2.3203 m
+  Max error: 6.7355 m
+  Min error: 0.2027 m
+
+Plot saved to /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/plot_inputs/seed_11/trajectory_comparison.png
+Plot saved to /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/plot_inputs/seed_11/trajectory_comparison.pdf

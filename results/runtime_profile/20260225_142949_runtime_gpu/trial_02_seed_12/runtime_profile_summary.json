@@ -1,0 +1,122 @@
+{
+  "profile": {
+    "warmup_frames": 20,
+    "profiled_frames": 200,
+    "total_processed_frames": 220,
+    "frame_stride": 4
+  },
+  "pipeline": {
+    "processed_frame_hz": 13.153423655598662,
+    "processed_frame_sec_mean": 0.07602583374362439,
+    "processed_frame_sec_median": 0.0722215025452897,
+    "processed_frame_sec_p95": 0.11552982728462666,
+    "processed_frame_hz_mean_of_inverse": 13.97868288367953,
+    "effective_input_hz_with_stride": 52.61369462239465
+  },
+  "components": {
+    "io_sec": {
+      "mean_sec": 0.023213421153486707,
+      "median_sec": 0.023208993952721357,
+      "p95_sec": 0.02526952823391184,
+      "total_sec": 4.642684230697341,
+      "mean_ms": 23.213421153486706,
+      "p95_ms": 25.269528233911842,
+      "share_of_frame_time": 0.3053359629276464,
+      "equivalent_hz": 43.07852743410886
+    },
+    "semantic_inference_sec": {
+      "mean_sec": 0.04381768711726181,
+      "median_sec": 0.040650452428963035,
+      "p95_sec": 0.08113251760951243,
+      "total_sec": 8.763537423452362,
+      "mean_ms": 43.81768711726181,
+      "p95_ms": 81.13251760951243,
+      "share_of_frame_time": 0.5763526022618123,
+      "equivalent_hz": 22.821834418687374
+    },
+    "lidar_association_sec": {
+      "mean_sec": 0.0002068516262806952,
+      "median_sec": 0.00022866501240059733,
+      "p95_sec": 0.0002770741819404065,
+      "total_sec": 0.04137032525613904,
+      "mean_ms": 0.2068516262806952,
+      "p95_ms": 0.2770741819404065,
+      "share_of_frame_time": 0.00272080707431955,
+      "equivalent_hz": 4834.383069548662
+    },
+    "motion_update_sec": {
+      "mean_sec": 0.0001070828182855621,
+      "median_sec": 0.0001044434611685574,
+      "p95_sec": 0.00013507412513718008,
+      "total_sec": 0.02141656365711242,
+      "mean_ms": 0.1070828182855621,
+      "p95_ms": 0.1350741251371801,
+      "share_of_frame_time": 0.0014085056751454855,
+      "equivalent_hz": 9338.566317270988
+    },
+    "measurement_update_sec": {
+      "mean_sec": 0.006046540702227503,
+      "median_sec": 0.006654025462921709,
+      "p95_sec": 0.00814537382684648,
+      "total_sec": 1.2093081404455006,
+      "mean_ms": 6.046540702227503,
+      "p95_ms": 8.145373826846479,
+      "share_of_frame_time": 0.07953271150721938,
+      "equivalent_hz": 165.38382014555975
+    },
+    "pose_post_sec": {
+      "mean_sec": 0.0001461719284998253,
+      "median_sec": 0.00013969396241009235,
+      "p95_sec": 0.00018213053117506204,
+      "total_sec": 0.02923438569996506,
+      "mean_ms": 0.1461719284998253,
+      "p95_ms": 0.18213053117506203,
+      "share_of_frame_time": 0.0019226613021140783,
+      "equivalent_hz": 6841.258853619046
+    },
+    "resample_sec": {
+      "mean_sec": 0.002040375568321906,
+      "median_sec": 0.002215662505477667,
+      "p95_sec": 0.002361808117711916,
+      "total_sec": 0.4080751136643812,
+      "mean_ms": 2.040375568321906,
+      "p95_ms": 2.361808117711916,
+      "share_of_frame_time": 0.02683792426667092,
+      "equivalent_hz": 490.1058489062598
+    },
+    "visualization_sec": {
+      "mean_sec": 0.0,
+      "median_sec": 0.0,
+      "p95_sec": 0.0,
+      "total_sec": 0.0,
+      "mean_ms": 0.0,
+      "p95_ms": 0.0,
+      "share_of_frame_time": 0.0,
+      "equivalent_hz": null
+    },
+    "stats_write_sec": {
+      "mean_sec": 0.0001595786726102233,
+      "median_sec": 0.00015084497863426805,
+      "p95_sec": 0.0001703970949165523,
+      "total_sec": 0.03191573452204466,
+      "mean_ms": 0.1595786726102233,
+      "p95_ms": 0.1703970949165523,
+      "share_of_frame_time": 0.002099005887240345,
+      "equivalent_hz": 6266.501554644062
+    },
+    "other_sec": {
+      "mean_sec": 0.0002881241566501558,
+      "median_sec": 0.0002888269373215735,
+      "p95_sec": 0.0003352992353029549,
+      "total_sec": 0.05762483133003116,
+      "mean_ms": 0.2881241566501558,
+      "p95_ms": 0.3352992353029549,
+      "share_of_frame_time": 0.0037898190978315734,
+      "equivalent_hz": 3470.725994051979
+    }
+  },
+  "artifacts": {
+    "runtime_profile_frames_csv": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu/trial_02_seed_12/runtime_profile_frames.csv",
+    "runtime_profile_summary_json": "/home/pulver/projects/Outdoor_SLPF/results/runtime_profile/20260225_142949_runtime_gpu/trial_02_seed_12/runtime_profile_summary.json"
+  }
+}

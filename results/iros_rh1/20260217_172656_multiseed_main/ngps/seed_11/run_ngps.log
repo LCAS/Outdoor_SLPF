@@ -1,0 +1,9 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/python /home/pulver/projects/Outdoor_SLPF/scripts/degrade_gps_vineyard.py /home/pulver/projects/Outdoor_SLPF/results/iros/20260217_172656_multiseed_main/ngps/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros/20260217_172656_multiseed_main/ngps/seed_11/trajectory_0.5.tum --seed 11
+
+Wrote: /home/pulver/projects/Outdoor_SLPF/results/iros/20260217_172656_multiseed_main/ngps/seed_11/trajectory_0.5.tum
+Samples in:  399
+Samples out: 399 (dropout_mode=remove)
+Expected outliers ~ 2.0 (p=0.005)
+Dropout samples (pre-remove): 0 (rate=0.0/s, mean_dur=2.0s)
+
+[exit_code=0 duration_sec=0.15]
