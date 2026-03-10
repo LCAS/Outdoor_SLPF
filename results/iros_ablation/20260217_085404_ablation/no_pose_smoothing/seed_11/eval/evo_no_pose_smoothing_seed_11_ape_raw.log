@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/no_pose_smoothing/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/no_pose_smoothing/seed_11/trajectory_0.5.tum --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/no_pose_smoothing/seed_11/eval/evo_no_pose_smoothing_seed_11_ape_raw.json --no_warnings
+
+APE w.r.t. translation part (m)
+(not aligned)
+
+       max	4.296988
+      mean	0.951569
+    median	0.884881
+       min	0.016881
+      rmse	1.097482
+       sse	480.582144
+       std	0.546794
+
+
+[exit_code=0 duration_sec=0.39]

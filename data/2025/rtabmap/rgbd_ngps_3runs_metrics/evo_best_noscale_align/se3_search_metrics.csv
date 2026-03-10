@@ -1,0 +1,4 @@
+seed,rmse,mean,median,std,min,max,scale,zip_path
+22,6.105920288672131,5.3059032054704005,4.939291620225886,3.0215316886964607,1.4211104763716085,18.029937070442895,1.0,/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_noscale_align/rtab_ngps_s22_ape_a.zip
+33,6.141922751268974,5.340791115605384,4.934152380031344,3.0330125852073277,1.356087707198361,18.185800382939387,1.0000000000000002,/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_noscale_align/rtab_ngps_s33_ape_a.zip
+11,6.142576520986908,5.344066922036176,4.964867394702721,3.0285631987756885,1.3802848701019035,18.150823413112306,1.0,/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_noscale_align/rtab_ngps_s11_ape_a.zip

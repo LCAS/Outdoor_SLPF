@@ -1,0 +1,16 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/non_wall_points/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/non_wall_points/seed_11/trajectory_0.5.tum -a --delta 10 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_ablation/20260217_085404_ablation/non_wall_points/seed_11/eval/evo_non_wall_points_seed_11_rpe_10m_align.json --no_warnings
+
+RPE w.r.t. translation part (m)
+for delta = 10.0 (m) using consecutive pairs
+(with SE(3) Umeyama alignment)
+
+       max	18.434524
+      mean	11.827557
+    median	12.604162
+       min	3.200132
+      rmse	12.587265
+       sse	3960.980851
+       std	4.306753
+
+
+[exit_code=0 duration_sec=0.43]

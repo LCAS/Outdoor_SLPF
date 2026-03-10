@@ -1,0 +1,2 @@
+variant,seed,remove_rate,n_removed,n_in_section,section_frames,section_ape_mean,section_ape_peak,post_ape_mean,baseline_post_ape_mean,post_to_section_ratio,recovery_threshold_ape,recovered_flag,recovery_frames,recovery_distance_m
+remove_30pct,11,0.3,14,48,0,nan,nan,nan,nan,nan,nan,0,nan,nan

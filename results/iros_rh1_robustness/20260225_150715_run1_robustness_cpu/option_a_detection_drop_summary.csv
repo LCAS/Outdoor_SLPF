@@ -1,0 +1,3 @@
+variant,n_runs,ape_align_rmse_mean,ape_align_rmse_std,row_correct_fraction_mean,row_correct_fraction_std,delta_ape_align_vs_baseline,delta_row_correct_vs_baseline
+full_map,1,1.013256699115812,0.0,1.0,0.0,0.0,0.0
+drop_20pct,1,0.8988992519440598,0.0,1.0,0.0,-0.11435744717175222,0.0

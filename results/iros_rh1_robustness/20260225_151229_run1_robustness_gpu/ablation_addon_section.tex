@@ -1,0 +1,38 @@
+% Auto-generated short paper section for run1 robustness experiments.
+% Requires: \usepackage{booktabs}
+
+\subsection{Robustness to Detection and Map Degradation}
+\label{sec:run1_robustness}
+We further stress-tested localisation on \texttt{run1} with two perturbation families:
+\textbf{(A) detection degradation}, where we randomly dropped semantic detections
+before LiDAR association (20\% and 40\%), and \textbf{(B) map degradation}, where
+we removed landmarks from one contiguous map section (30\% and 50\% removal).
+Table~\ref{tab:run1_robustness} reports mean $\pm$ std over three seeds
+(\#11, \#22, \#33).
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lccccc}
+\toprule
+Variant & APE$_{\text{align}}$ (m) $\downarrow$ & RowCorrect $\uparrow$ & XTE (m) $\downarrow$ & Rec. frames $\downarrow$ & Rec. rate $\uparrow$ \\
+\midrule
+Baseline (full map) & 0.996 $\pm$ 0.028 & 0.724 $\pm$ 0.018 & 1.306 $\pm$ 0.047 & -- & -- \\
+DetDrop 20\% & 1.021 $\pm$ 0.082 & 0.733 $\pm$ 0.008 & 1.306 $\pm$ 0.052 & -- & -- \\
+DetDrop 40\% & 1.049 $\pm$ 0.090 & 0.735 $\pm$ 0.027 & 1.263 $\pm$ 0.049 & -- & -- \\
+MapRemove 30\% & 1.045 $\pm$ 0.036 & 0.721 $\pm$ 0.011 & 1.265 $\pm$ 0.016 & 18.67 $\pm$ 6.85 & 100\% \\
+MapRemove 50\% & 1.127 $\pm$ 0.129 & 0.716 $\pm$ 0.005 & 1.323 $\pm$ 0.024 & 18.67 $\pm$ 6.13 & 100\% \\
+\bottomrule
+\end{tabular}
+\caption{Run1 robustness experiments under detection-drop and map-landmark removal perturbations.}
+\label{tab:run1_robustness}
+\end{table}
+
+The detector-drop setting shows graceful degradation (APE increases by
+$+2.5\%$ at 20\% drop and $+5.3\%$ at 40\% drop versus baseline) while
+maintaining row correctness. Under map perturbation, the 50\% removal case is
+the hardest (APE $+13.1\%$), but recovery remains consistent; for map removal,
+mean recovery distance after leaving the degraded section is
+$11.92 \pm 4.81$~m (30\%) and $11.79 \pm 4.46$~m (50\%).
+

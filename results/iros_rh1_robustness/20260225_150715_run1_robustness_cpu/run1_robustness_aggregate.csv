@@ -1,0 +1,4 @@
+option,variant,n_runs,ape_align_rmse_mean,ape_align_rmse_std,row_correct_fraction_mean,row_correct_fraction_std,cross_track_mean_mean,cross_track_mean_std,row_switch_events_mean,row_switch_events_std,runtime_sec_mean,runtime_sec_std,delta_ape_align_vs_baseline,delta_row_correct_vs_baseline
+baseline,full_map,1,1.013256699115812,0.0,1.0,0.0,1.9632835016268926,0.0,0.0,0.0,6.013951539993286,0.0,0.0,0.0
+option_a_detection_drop,drop_20pct,1,0.8988992519440598,0.0,1.0,0.0,1.9572215337507677,0.0,0.0,0.0,6.038089036941528,0.0,-0.11435744717175222,0.0
+option_b_landmark_removal,remove_30pct,1,1.2224305993089255,0.0,1.0,0.0,1.9795529802519147,0.0,0.0,0.0,5.974961996078491,0.0,0.20917390019311344,0.0

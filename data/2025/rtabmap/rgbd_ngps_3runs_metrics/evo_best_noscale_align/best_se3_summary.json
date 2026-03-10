@@ -1,0 +1,6 @@
+{
+  "best_seed": 22,
+  "best_rmse": 6.105920288672131,
+  "best_scale_from_matrix": 1.0,
+  "best_zip": "/home/pulver/projects/Outdoor_SLPF/results/rtabmap/rgbd_ngps_3runs_metrics/evo_best_noscale_align/rtab_ngps_s22_ape_a.zip"
+}

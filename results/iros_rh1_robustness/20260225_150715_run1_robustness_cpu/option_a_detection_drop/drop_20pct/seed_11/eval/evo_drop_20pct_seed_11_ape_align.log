@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/trajectory_0.5.tum -a --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/eval/evo_drop_20pct_seed_11_ape_align.json --no_warnings
+
+APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.974271
+      mean	0.770919
+    median	0.594558
+       min	0.492688
+      rmse	0.898899
+       sse	6.464159
+       std	0.462281
+
+
+[exit_code=0 duration_sec=0.37]

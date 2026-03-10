@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11/trajectory_0.5.tum --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline_eval/seed_11/evo_baseline_seed_11_ape_raw.json --no_warnings
+
+APE w.r.t. translation part (m)
+(not aligned)
+
+       max	4.296988
+      mean	2.375289
+    median	2.034207
+       min	1.430208
+      rmse	2.523061
+       sse	50.926689
+       std	0.850788
+
+
+[exit_code=0 duration_sec=0.38]

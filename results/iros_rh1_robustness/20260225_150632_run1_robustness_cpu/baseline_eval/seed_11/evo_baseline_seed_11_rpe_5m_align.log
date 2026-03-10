@@ -1,0 +1,5 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150632_run1_robustness_cpu/baseline/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150632_run1_robustness_cpu/baseline/seed_11/trajectory_0.5.tum -a --delta 5 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150632_run1_robustness_cpu/baseline_eval/seed_11/evo_baseline_seed_11_rpe_5m_align.json --no_warnings
+
+[ERROR] delta = 5.0 (m) produced an empty index list - try lower values or a less strict tolerance
+
+[exit_code=1 duration_sec=0.36]

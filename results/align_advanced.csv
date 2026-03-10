@@ -1,0 +1,3 @@
+method,spf_rmse,ngps_rmse,extra
+timeshift_umeyama,1.407786,1.291489,"spf_shift=0.547,ngps_shift=-0.677"
+huber_umeyama,1.415238,1.303706,delta=1.0

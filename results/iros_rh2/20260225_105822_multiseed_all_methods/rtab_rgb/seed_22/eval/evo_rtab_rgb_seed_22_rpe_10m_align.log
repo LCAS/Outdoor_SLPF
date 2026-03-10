@@ -1,0 +1,16 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/rtabmap_rgb_filtered.tum -a --delta 10 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/eval/evo_rtab_rgb_seed_22_rpe_10m_align.json --no_warnings
+
+RPE w.r.t. translation part (m)
+for delta = 10.0 (m) using consecutive pairs
+(with SE(3) Umeyama alignment)
+
+       max	12.229038
+      mean	4.846006
+    median	4.827970
+       min	0.640058
+      rmse	5.941016
+       sse	529.435000
+       std	3.436844
+
+
+[exit_code=0 duration_sec=0.42]

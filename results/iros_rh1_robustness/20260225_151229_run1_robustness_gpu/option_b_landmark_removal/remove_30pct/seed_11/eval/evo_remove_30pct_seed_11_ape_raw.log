@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_b_landmark_removal/remove_30pct/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_b_landmark_removal/remove_30pct/seed_11/trajectory_0.5.tum --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_b_landmark_removal/remove_30pct/seed_11/eval/evo_remove_30pct_seed_11_ape_raw.json --no_warnings
+
+APE w.r.t. translation part (m)
+(not aligned)
+
+       max	4.296988
+      mean	0.956523
+    median	0.876359
+       min	0.019657
+      rmse	1.086158
+       sse	470.716001
+       std	0.514591
+
+
+[exit_code=0 duration_sec=0.40]

@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/rtabmap_rgb_filtered.tum -a --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgb/seed_22/eval/evo_rtab_rgb_seed_22_ape_align.json --no_warnings
+
+APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	20.089794
+      mean	7.718242
+    median	6.115684
+       min	2.261953
+      rmse	8.828259
+       sse	5143.917806
+       std	4.285661
+
+
+[exit_code=0 duration_sec=0.42]

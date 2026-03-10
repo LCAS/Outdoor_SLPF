@@ -1,0 +1,16 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1/20260225_130359_multiseed_slpf_ngps_run1_recomputed/slpf/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1/20260225_130359_multiseed_slpf_ngps_run1_recomputed/slpf/seed_11/trajectory_0.5.tum -a --delta 10 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1/20260225_130359_multiseed_slpf_ngps_run1_recomputed/slpf/seed_11/eval/evo_slpf_seed_11_rpe_10m_align.json --no_warnings
+
+RPE w.r.t. translation part (m)
+for delta = 10.0 (m) using consecutive pairs
+(with SE(3) Umeyama alignment)
+
+       max	21.418573
+      mean	11.181708
+    median	11.454006
+       min	1.191780
+      rmse	12.301458
+       sse	3783.147003
+       std	5.127893
+
+
+[exit_code=0 duration_sec=0.44]

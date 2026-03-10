@@ -1,0 +1,18 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/python /home/pulver/projects/Outdoor_SLPF/scripts/spf_lidar.py --miss-penalty 4.0 --wrong-hit-penalty 4.0 --gps-weight 0.5 --seed 11 --output-folder /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11 --frame-stride 4 --semantic-sigma 0.05 --gps-sigma 1.1 --corridor-weight 0.30 --corridor-dist-sigma 1.50 --corridor-heading-sigma 0.35 --background-class-weight 0.20 --max-background-obs 120 --expected-obs-count 150 --pose-smooth-alpha-pos 0.55 --pose-smooth-alpha-theta 0.50 --odom-yaw-filter-alpha 0.90 --particle-count 100 --segment-chunk 4096 --detection-drop-rate 0.000000 --no-visualization --data-path /home/pulver/projects/Outdoor_SLPF/data/2025/rh_run1 --geojson-path /home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson --max-frames 8
+
+/home/pulver/projects/Outdoor_SLPF/.venv/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+  warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+Using device: cuda
+[INFO] Running with Miss Penalty: 4.0, Wrong Hit Penalty: 4.0, GPS Weight: 0.5, Seed: 11, Output: /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11, DataPath: /home/pulver/projects/Outdoor_SLPF/data/2025/rh_run1, CSV: /home/pulver/projects/Outdoor_SLPF/data/2025/rh_run1/data.csv, Stride: 4, MaxFrames: 8, Visualize: False, Model: wall, DisableGPS: False, DisableSemantic: False, DisableCorridor: False, DisableBackground: False, StaticGPSWeight: False, DisablePoseSmooth: False, SemanticClasses: both, DetectionDropRate: 0.0, SegmentChunk: 4096, ProfileRuntime: False, ProfileWarmup: 20
+
+Processing frames:   0%|          | 0/1593 [00:00<?, ?it/s]
+Processing frames:   0%|          | 1/1593 [00:00<23:17,  1.14it/s]
+Processing frames:   1%|          | 9/1593 [00:01<02:16, 11.58it/s]
+Processing frames:   1%|          | 17/1593 [00:01<01:14, 21.24it/s]
+Processing frames:   2%|▏         | 25/1593 [00:01<00:52, 29.96it/s]
+Processing frames:   2%|▏         | 32/1593 [00:01<01:05, 23.73it/s]
+[INFO] Trajectory saved to /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11/trajectory_0.5.tum
+[INFO] Trajectory saved to /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/baseline/seed_11/gps_pose.tum
+[INFO] Finished processing all frames from the CSV file.
+
+[exit_code=0 duration_sec=6.01]

@@ -1,0 +1,14 @@
+{
+  "seed": 22,
+  "heading_index_used": 2,
+  "delta_theta_rad": -0.6001200257690196,
+  "delta_theta_deg": -34.384344677847025,
+  "gt_start_time_used": 1756812926.2363498,
+  "gt_start_xy_used": [
+    -11.074195842837932,
+    -11.385537224443272
+  ],
+  "ape_rmse_no_extra_align": 40.125206993305625,
+  "ape_mean_no_extra_align": 33.75676373220247,
+  "ape_median_no_extra_align": 34.4224023202596
+}

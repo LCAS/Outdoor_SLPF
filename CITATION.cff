@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+title: Semantic-Aware Particle Filter for Reliable Vineyard Robot Localisation
+message: If you use this repository, please cite the accompanying paper.
+type: software
+authors:
+  - family-names: de Silva
+    given-names: Rajitha
+  - family-names: Cox
+    given-names: Jonathan
+  - family-names: Heselden
+    given-names: James R.
+  - family-names: Popovic
+    given-names: Marija
+  - family-names: Cadena
+    given-names: Cesar
+  - family-names: Polvara
+    given-names: Riccardo
+preferred-citation:
+  type: article
+  title: Semantic-Aware Particle Filter for Reliable Vineyard Robot Localisation
+  authors:
+    - family-names: de Silva
+      given-names: Rajitha
+    - family-names: Cox
+      given-names: Jonathan
+    - family-names: Heselden
+      given-names: James R.
+    - family-names: Popovic
+      given-names: Marija
+    - family-names: Cadena
+      given-names: Cesar
+    - family-names: Polvara
+      given-names: Riccardo
+  journal: arXiv preprint arXiv:2509.18342
+  year: 2025

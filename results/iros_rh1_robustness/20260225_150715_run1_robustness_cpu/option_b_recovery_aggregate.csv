@@ -1,0 +1,2 @@
+variant,n_runs,section_ape_mean_mean,section_ape_mean_std,section_ape_peak_mean,section_ape_peak_std,post_ape_mean_mean,post_ape_mean_std,baseline_post_ape_mean_mean,baseline_post_ape_mean_std,post_to_section_ratio_mean,post_to_section_ratio_std,recovery_frames_mean,recovery_frames_std,recovery_distance_m_mean,recovery_distance_m_std,recovered_fraction
+remove_30pct,1,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.0

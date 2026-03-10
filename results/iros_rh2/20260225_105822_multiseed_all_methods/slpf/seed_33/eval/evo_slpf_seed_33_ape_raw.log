@@ -1,0 +1,15 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_ape tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_33/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_33/trajectory_0.5.tum --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_33/eval/evo_slpf_seed_33_ape_raw.json --no_warnings
+
+APE w.r.t. translation part (m)
+(not aligned)
+
+       max	2.771807
+      mean	1.053993
+    median	0.967041
+       min	0.060757
+      rmse	1.202646
+       sse	568.418720
+       std	0.579187
+
+
+[exit_code=0 duration_sec=0.38]

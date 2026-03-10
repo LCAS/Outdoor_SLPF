@@ -1,0 +1,16 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_a_detection_drop/drop_20pct/seed_22/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_a_detection_drop/drop_20pct/seed_22/trajectory_0.5.tum -a --delta 2 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_151229_run1_robustness_gpu/option_a_detection_drop/drop_20pct/seed_22/eval/evo_drop_20pct_seed_22_rpe_2m_align.json --no_warnings
+
+RPE w.r.t. translation part (m)
+for delta = 2.0 (m) using consecutive pairs
+(with SE(3) Umeyama alignment)
+
+       max	6.823297
+      mean	3.089820
+    median	3.249919
+       min	0.267675
+      rmse	3.294740
+       sse	1204.939762
+       std	1.143822
+
+
+[exit_code=0 duration_sec=0.46]

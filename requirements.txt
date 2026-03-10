@@ -1,0 +1,14 @@
+# Minimal Python dependencies to run the analysis and plotting scripts
+# Create a venv and install with:
+# python -m venv .venv
+# source .venv/bin/activate
+# pip install -r requirements.txt
+
+numpy>=1.23
+matplotlib>=3.5
+pandas>=1.5
+pyproj>=3.5
+scipy>=1.9
+
+# Optional (for strict APE/RPE evaluation using the evo toolkit)
+evo

@@ -1,0 +1,11 @@
+{
+  "rtab_std": 0.35,
+  "gps_std": 1.8,
+  "process_std": 0.8,
+  "seeds": [
+    11,
+    22,
+    33
+  ],
+  "geojson": "/home/pulver/projects/Outdoor_SLPF/data/riseholme_poles_trunk.geojson"
+}

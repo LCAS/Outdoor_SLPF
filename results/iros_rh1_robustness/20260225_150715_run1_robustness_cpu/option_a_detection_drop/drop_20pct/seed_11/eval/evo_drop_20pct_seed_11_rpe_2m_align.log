@@ -1,0 +1,5 @@
+$ /home/pulver/projects/Outdoor_SLPF/.venv/bin/evo_rpe tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/gps_pose.tum /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/trajectory_0.5.tum -a --delta 2 --delta_unit m --save_results /home/pulver/projects/Outdoor_SLPF/results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/option_a_detection_drop/drop_20pct/seed_11/eval/evo_drop_20pct_seed_11_rpe_2m_align.json --no_warnings
+
+[ERROR] delta = 2.0 (m) produced an empty index list - try lower values or a less strict tolerance
+
+[exit_code=1 duration_sec=0.37]
