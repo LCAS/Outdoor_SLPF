@@ -72,27 +72,29 @@ Qualitative comparison across the two main experiments:
 
 Plot provenance and inputs are documented in `results/plots/PLOT_SOURCES.md`.
 
-The compact tables below report multiseed means over seeds `11,22,33`. Lower is better for all metrics except `Row correct`.
+The tables below reproduce the paper-reported values, shown as mean `±` std over three runs. Lower is better for all metrics except `Row correct`.
 
-Experiment 1 source: `results/iros_rh1/final_20260217/trajectory_metrics_multiseed_aggregate.csv`
+Experiment 1:
 
-| Method | APE align RMSE (m) | RPE 5m align RMSE (m) | Cross-track mean (m) | Row correct |
-| --- | ---: | ---: | ---: | ---: |
-| SLPF (ours) | 1.093 | 7.066 | 1.232 | 0.726 |
-| AMCL | 1.300 | 5.517 | 1.290 | 0.623 |
-| AMCL+NoisyGNSS | 1.461 | 5.405 | 1.354 | 0.616 |
-| Noisy GNSS | 2.978 | 3.988 | 1.771 | 0.644 |
-| RTAB-Map RGBD | 6.810 | 8.255 | 5.834 | 0.368 |
+| Method | APE Raw (m) | APE Aligned (m) | RPE 2m (m) | RPE 5m (m) | Cross-track Mean (m) | Median | Max | Row correct | Row mislocalisation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Noisy GNSS | 3.04 ± 0.13 | 2.98 ± 0.13 | 3.56 ± 0.29 | 3.99 ± 0.43 | 1.77 ± 0.12 | 1.78 | 1.78 | 0.64 ± 0.04 | 64.3 ± 5.4 |
+| AMCL | 1.37 ± 0.47 | 1.02 ± 0.30 | 4.69 ± 0.05 | 5.39 ± 0.11 | 1.40 ± 0.10 | 0.84 | 1.54 | 0.67 ± 0.13 | 27.3 ± 3.1 |
+| AMCL+NoisyGNSS | 1.33 ± 0.46 | 0.99 ± 0.30 | 4.66 ± 0.04 | 5.35 ± 0.10 | 1.39 ± 0.09 | 0.80 | 1.52 | 0.67 ± 0.13 | 27.3 ± 3.1 |
+| RGB RTAB-Map | 59.62 ± 0.48 | 6.68 ± 0.03 | 1.19 ± 0.01 | 2.21 ± 0.01 | 6.21 ± 0.03 | 6.15 | 19.49 | 0.45 ± 0.00 | 14.0 ± 0.0 |
+| RGBD RTAB-Map | 61.33 ± 0.28 | 10.02 ± 0.03 | 8.25 ± 0.08 | 10.79 ± 0.11 | 6.78 ± 0.01 | 6.13 | 46.10 | 0.48 ± 0.00 | 13.3 ± 0.5 |
+| SLPF (ours) | 1.07 ± 0.09 | 1.04 ± 0.10 | 3.33 ± 0.07 | 6.92 ± 0.09 | 1.26 ± 0.06 | 1.25 | 3.85 | 0.73 ± 0.01 | 34.67 ± 1.70 |
 
-Experiment 2 source: `results/iros_rh2/20260225_105822_multiseed_all_methods/trajectory_metrics_multiseed_aggregate.csv`
+Experiment 2:
 
-| Method | APE align RMSE (m) | RPE 5m align RMSE (m) | Cross-track mean (m) | Row correct |
-| --- | ---: | ---: | ---: | ---: |
-| SLPF (ours) | 1.114 | 6.816 | 1.455 | 0.668 |
-| AMCL | 2.043 | 3.429 | 1.551 | 0.549 |
-| AMCL+NoisyGNSS | 1.976 | 3.422 | 1.512 | 0.554 |
-| Noisy GNSS | 3.088 | 4.222 | 1.990 | 0.577 |
-| RTAB-Map RGBD | 9.063 | 3.430 | 7.247 | 0.415 |
+| Method | APE Raw (m) | APE Aligned (m) | RPE 2m (m) | RPE 5m (m) | Cross-track Mean (m) | Median | Max | Row correct | Row mislocalisation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Noisy GNSS | 3.16 ± 0.22 | 3.09 ± 0.23 | 3.76 ± 0.32 | 4.22 ± 0.55 | 1.99 ± 0.04 | 1.80 | 36.99 | 0.58 ± 0.02 | 713.3 ± 23.2 |
+| AMCL | 3.50 ± 0.94 | 2.04 ± 0.31 | 2.78 ± 0.79 | 3.43 ± 0.92 | 1.55 ± 0.12 | 1.86 | 7.01 | 0.55 ± 0.05 | 26.7 ± 2.1 |
+| AMCL+NoisyGNSS | 3.38 ± 0.91 | 1.98 ± 0.31 | 2.80 ± 0.78 | 3.42 ± 0.92 | 1.51 ± 0.11 | 1.77 | 6.38 | 0.55 ± 0.05 | 26.7 ± 1.2 |
+| RGB RTAB-Map | 85.95 ± 0.19 | 9.12 ± 0.41 | 1.63 ± 0.01 | 2.48 ± 0.00 | 6.81 ± 0.31 | 6.26 | 20.80 | 0.39 ± 0.02 | 17.0 ± 0.8 |
+| RGBD RTAB-Map | 87.17 ± 0.01 | 9.06 ± 0.00 | 1.81 ± 0.00 | 3.43 ± 0.00 | 7.25 ± 0.08 | 6.73 | 38.15 | 0.42 ± 0.00 | 18.7 ± 0.5 |
+| SLPF (ours) | 1.24 ± 0.04 | 1.11 ± 0.06 | 3.34 ± 0.02 | 6.82 ± 0.07 | 1.46 ± 0.03 | 1.31 | 4.35 | 0.67 ± 0.02 | 28.0 ± 3.3 |
 
 The ablation study and the full paper artifact bundle are prepared separately from this source-focused release commit.
 
