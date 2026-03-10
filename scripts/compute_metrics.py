@@ -327,6 +327,22 @@ def main():
             results_dir / 'ngps_only' / 'gps_pose.tum',
             results_dir / 'ngps_only-deprecated' / 'gps_pose.tum',
         )
+    rtab_rgbd_traj = first_existing(
+        results_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+        results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+    )
+    rtab_rgbd_gt = first_existing(
+        results_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+    )
+    rtab_rgb_traj = first_existing(
+        results_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+        results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+    )
+    rtab_rgb_gt = first_existing(
+        results_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+    )
 
     trajectories = {
         'SPF LiDAR': {
@@ -353,12 +369,12 @@ def main():
             'ground_truth': amcl_ngps_gt
         },
         'RTABMap RGBD': {
-            'trajectory': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
-            'ground_truth': results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum'
+            'trajectory': rtab_rgbd_traj,
+            'ground_truth': rtab_rgbd_gt
         },
         'RTABMap RGB': {
-            'trajectory': results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
-            'ground_truth': results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum'
+            'trajectory': rtab_rgb_traj,
+            'ground_truth': rtab_rgb_gt
         },
         'ORB-SLAM3 RGBD (s4)': {
             'trajectory': results_dir / 'orbslam3' / 'rgbd' / 's4' / 'orbslam3_rgbd.tum',

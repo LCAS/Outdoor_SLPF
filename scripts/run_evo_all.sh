@@ -34,6 +34,38 @@ get_ngps_est() {
     fi
 }
 
+get_rtab_ref_rgbd() {
+    if [ -f "$RESULTS/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/gps_pose.tum" ]; then
+        echo "$RESULTS/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/gps_pose.tum"
+    else
+        echo "$RESULTS/rtabmap/rgbd/tum1/gps_pose.tum"
+    fi
+}
+
+get_rtab_est_rgbd() {
+    if [ -f "$RESULTS/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum" ]; then
+        echo "$RESULTS/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum"
+    else
+        echo "$RESULTS/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum"
+    fi
+}
+
+get_rtab_ref_rgb() {
+    if [ -f "$RESULTS/rtabmap/rgb_run1_3runs/run1/rtabmap/rgb/tum1/gps_pose.tum" ]; then
+        echo "$RESULTS/rtabmap/rgb_run1_3runs/run1/rtabmap/rgb/tum1/gps_pose.tum"
+    else
+        echo "$RESULTS/rtabmap/rgb/tum1/gps_pose.tum"
+    fi
+}
+
+get_rtab_est_rgb() {
+    if [ -f "$RESULTS/rtabmap/rgb_run1_3runs/run1/rtabmap/rgb/tum1/rtabmap_rgb_filtered.tum" ]; then
+        echo "$RESULTS/rtabmap/rgb_run1_3runs/run1/rtabmap/rgb/tum1/rtabmap_rgb_filtered.tum"
+    else
+        echo "$RESULTS/rtabmap/rgb/tum1/rtabmap_rgb_filtered.tum"
+    fi
+}
+
 
 get_ref() {
     case "$1" in
@@ -48,8 +80,8 @@ get_ref() {
                 echo "$RESULTS/iros/amcl_ngps/tum1/gps_pose.tum"
             fi
             ;;
-        rtab_rgbd) echo "$RESULTS/rtabmap/rgbd/tum1/gps_pose.tum" ;;
-        rtab_rgb) echo "$RESULTS/rtabmap/rgb/tum1/gps_pose.tum" ;;
+        rtab_rgbd) get_rtab_ref_rgbd ;;
+        rtab_rgb) get_rtab_ref_rgb ;;
         orb_rgbd_s4) echo "$RESULTS/orbslam3/rgbd/s4/gps_pose.tum" ;;
         orb_rgbd_full) echo "$RESULTS/orbslam3/rgbd/full/gps_pose.tum" ;;
         orb_mono_s4) echo "$RESULTS/orbslam3/mono/s4/gps_pose.tum" ;;
@@ -71,8 +103,8 @@ get_est() {
                 echo "$RESULTS/iros/amcl_ngps/tum1/trajectory_0.5.tum"
             fi
             ;;
-        rtab_rgbd) echo "$RESULTS/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum" ;;
-        rtab_rgb) echo "$RESULTS/rtabmap/rgb/tum1/rtabmap_rgb_filtered.tum" ;;
+        rtab_rgbd) get_rtab_est_rgbd ;;
+        rtab_rgb) get_rtab_est_rgb ;;
         orb_rgbd_s4) echo "$RESULTS/orbslam3/rgbd/s4/orbslam3_rgbd.tum" ;;
         orb_rgbd_full) echo "$RESULTS/orbslam3/rgbd/full/orbslam3_rgbd.tum" ;;
         orb_mono_s4) echo "$RESULTS/orbslam3/mono/s4/orbslam3_mono.tum" ;;

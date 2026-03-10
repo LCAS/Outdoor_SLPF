@@ -1,0 +1,2 @@
+method_key,ape_raw_rmse,ape_umey_rmse,ape_umey_scale_rmse,rpe_2m_rmse,rpe_5m_rmse,rpe_10m_rmse,cross_track_mean,cross_track_median,cross_track_max,row_correct_fraction,row_switch_events
+rtab_rgb,59.42743314823648,6.6896877637056855,3.107405150921471,1.1979156077890272,2.2178885087151867,4.1026856330881865,6.214656487805037,6.167586622903574,19.50110026323314,0.44902912621359226,14

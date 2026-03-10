@@ -49,7 +49,20 @@ def compute_stats(traj_path, gt_path):
 
 if __name__ == "__main__":
     from pathlib import Path
+
+    def first_existing(*candidates):
+        for path in candidates:
+            if path.exists():
+                return path
+        return candidates[0]
+
     base_dir = Path(__file__).parent.parent
-    traj_path = base_dir / "results/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum"
-    gt_path = base_dir / "results/rtabmap/rgbd/tum1/gps_pose.tum"
+    traj_path = first_existing(
+        base_dir / "results/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum",
+        base_dir / "results/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum",
+    )
+    gt_path = first_existing(
+        base_dir / "results/rtabmap/rgbd_run1_3runs/run1/rtabmap/rgbd/tum1/gps_pose.tum",
+        base_dir / "results/rtabmap/rgbd/tum1/gps_pose.tum",
+    )
     compute_stats(traj_path, gt_path)

@@ -427,6 +427,30 @@ def main():
             baselines_dir / 'ngps_only' / 'gps_pose.tum',
             baselines_dir / 'ngps_only-deprecated' / 'gps_pose.tum',
         )
+    rtab_rgbd_traj = first_existing(
+        baselines_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+        results_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+        baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+        results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
+    )
+    rtab_rgbd_gt = first_existing(
+        baselines_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgbd_run1_3runs' / 'run1' / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+        baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+    )
+    rtab_rgb_traj = first_existing(
+        baselines_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+        results_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+        baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+        results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
+    )
+    rtab_rgb_gt = first_existing(
+        baselines_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgb_run1_3runs' / 'run1' / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+        baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+        results_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+    )
 
     trajectories = {
         'SLPF(ours)': {
@@ -446,13 +470,13 @@ def main():
             'stride': 1
         },
         'RTABMAP RGBD': {
-            'trajectory': baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'rtabmap_rgbd_filtered.tum',
-            'ground_truth': baselines_dir / 'rtabmap' / 'rgbd' / 'tum1' / 'gps_pose.tum',
+            'trajectory': rtab_rgbd_traj,
+            'ground_truth': rtab_rgbd_gt,
             'stride': 1
         },
         'RTABMAP RGB': {
-            'trajectory': baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'rtabmap_rgb_filtered.tum',
-            'ground_truth': baselines_dir / 'rtabmap' / 'rgb' / 'tum1' / 'gps_pose.tum',
+            'trajectory': rtab_rgb_traj,
+            'ground_truth': rtab_rgb_gt,
             'stride': 1
         },
         'ORB-SLAM3 RGBD (full)': {
