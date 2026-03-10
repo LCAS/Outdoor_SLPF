@@ -234,3 +234,24 @@ docs/ORB_SLAM3_ON_ICRA2.md
 
 # Data artifacts
 data/**/*.zip
+
+# Local results and exploratory outputs (not part of release bundles)
+results/ab_runs/
+results/evo_*.json
+results/evo_aggregated_metrics.csv
+results/evo_aggregated_metrics.pdf
+results/iros_ablation/20260217_085102_ablation_smoke/
+results/iros_aligned/
+results/iros_rh1/archive/
+results/iros_rh1_robustness/20260225_150632_run1_robustness_cpu/
+results/iros_rh1_robustness/20260225_150715_run1_robustness_cpu/
+results/iros_riseholme2/
+results/iros_semantic_class_ablation/
+results/noisy_gps/
+results/spf_lidar++/
+results/trajectory_comparison.pdf
+results/plots/fig4_zoom_headland_transition_experiment2_candidate.pdf
+
+# Out-of-scope local scripts
+scripts/run_jojo_multiseed.py
+scripts/tune_spfpp_optuna.py
