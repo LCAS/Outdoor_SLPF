@@ -73,7 +73,14 @@ CORE_METRICS = [
     "row_switch_events",
 ]
 
+# Metrics reported in the aggregate CSV. Keep APE raw in addition to APE aligned.
+ABLATION_AGG_METRICS = [
+    "ape_raw_rmse",
+    *KEY_METRICS,
+]
+
 LOWER_IS_BETTER = {
+    "ape_raw_rmse",
     "ape_align_rmse",
     "rpe_2m_align_rmse",
     "rpe_5m_align_rmse",
@@ -147,7 +154,7 @@ def aggregate_by_variant(rows: List[Dict[str, object]]) -> List[Dict[str, object
         }
 
         metric_means = {}
-        for metric in KEY_METRICS:
+        for metric in ABLATION_AGG_METRICS:
             vals = np.asarray([safe_float(r.get(metric)) for r in group], dtype=np.float64)
             valid = vals[np.isfinite(vals)]
             out[f"{metric}_mean"] = float(np.mean(valid)) if valid.size else float("nan")
@@ -162,7 +169,7 @@ def aggregate_by_variant(rows: List[Dict[str, object]]) -> List[Dict[str, object
     full = next((r for r in agg_rows if r["variant"] == "full"), None)
     if full is not None:
         for row in agg_rows:
-            for metric in KEY_METRICS:
+            for metric in ABLATION_AGG_METRICS:
                 row[f"delta_vs_full_{metric}"] = safe_float(row[f"{metric}_mean"]) - safe_float(full[f"{metric}_mean"])
             row["delta_vs_full_primary_score"] = safe_float(row["primary_score_mean"]) - safe_float(full["primary_score_mean"])
 
@@ -175,7 +182,7 @@ def aggregate_by_variant(rows: List[Dict[str, object]]) -> List[Dict[str, object
     for row in agg_rows:
         row["rank_primary_score"] = int(rank_primary[row["variant"]])
 
-    for metric in KEY_METRICS:
+    for metric in ABLATION_AGG_METRICS:
         mean_key = f"{metric}_mean"
         lower = metric in LOWER_IS_BETTER
         rank_map = rank_variants(mean_key, lower_better=lower)

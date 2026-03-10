@@ -1,9 +1,10 @@
-# Experiment runner and metrics — README
+# Experiment runners and metrics
 
 This document explains the scripts used to run the experiments and compute metrics in this repository, and gives precise definitions for every metric produced by the pipeline.
 
 **Scope**
 - **Repository scripts** referenced: `scripts/compute_metrics.py`, `scripts/run_evo_all.sh`, `scripts/aggregate_evo_results.py`, `scripts/plot_trajectories.py`.
+- **Baseline policy**: AMCL, RTAB-Map, and ORB-SLAM3 are evaluated from exported trajectory files already present in the repository layout. The public release does not require shipping their native runtime stacks.
 
 **How the runner works (high level)**
 - **Prepare environment**: activate the project's Python virtualenv (`.venv`) so required Python packages and the `evo` CLI are available.

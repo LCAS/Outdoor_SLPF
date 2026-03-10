@@ -1,5 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+**/__pycache__/
 *.py[codz]
 *$py.class
 
@@ -168,6 +169,9 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# OS cruft
+.DS_Store
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
@@ -210,6 +214,17 @@ __marimo__/
 amcl_output/*
 output/*
 old/*
+.tmp_home/
+.tmp_mpl/
+reviews_ICRA/
+evaluation_setup.tex
+methodology.tex
+docker/
+scripts/amcl/
+scripts/orbslam3/
+configs/amcl_jojo/
+configs/orbslam3/
+docs/ORB_SLAM3_ON_ICRA2.md
 
 # Bash Scripts
 *.png

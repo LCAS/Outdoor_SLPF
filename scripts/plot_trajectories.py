@@ -245,7 +245,7 @@ def plot_trajectory_with_error_colors(
     show_start_end=False,
 ):
     """
-    Plot a trajectory with colors representing errors, overlay its GPS ground truth path,
+    Plot a trajectory with colors representing errors, overlay its GNSS ground truth path,
     and optionally add mapped landmarks.
     """
     points = trajectory_pos[:, :2]
@@ -268,7 +268,7 @@ def plot_trajectory_with_error_colors(
 
     if gt_positions is not None:
         gt_xy = gt_positions[:, :2]
-        ax.plot(gt_xy[:, 0], gt_xy[:, 1], color='gray', linestyle='--', linewidth=1.5, label='GPS ground truth')
+        ax.plot(gt_xy[:, 0], gt_xy[:, 1], color='gray', linestyle='--', linewidth=1.5, label='GNSS ground truth')
     else:
         gt_xy = np.empty((0, 2))
 
@@ -440,7 +440,7 @@ def main():
             'ground_truth': baselines_dir / 'amcl' / 'tum1' / 'gps_pose.tum',
             'stride': 1
         },
-        'AMCL+GPS': {
+        'AMCL+GNSS': {
             'trajectory': amcl_ngps_traj,
             'ground_truth': amcl_ngps_gt,
             'stride': 1
@@ -465,7 +465,7 @@ def main():
             'ground_truth': results_dir / 'orbslam3' / 'mono' / 'full' / 'gps_pose.tum',
             'stride': 1
         },
-        'Noisy GPS': {
+        'Noisy GNSS': {
             # use the synthetic noisy GNSS (already in results) as the method trajectory
             'trajectory': noisy_gps_traj,
             # compare against the common GPS ground truth stored with ngps results
@@ -474,7 +474,7 @@ def main():
         }
     }
     if not has_amcl_ngps:
-        trajectories.pop('AMCL+GPS', None)
+        trajectories.pop('AMCL+GNSS', None)
 
     if method_labels_csv:
         allowed = {x.strip() for x in method_labels_csv.split(',') if x.strip()}
@@ -573,9 +573,9 @@ def main():
     # Per-method colormap ranges keep low-error and high-error methods readable.
     method_vrange = {
         'SLPF(ours)': (0.0, 5.0),
-        'Noisy GPS': (0.0, 10.0),
+        'Noisy GNSS': (0.0, 10.0),
         'AMCL': (0.0, 5.0),
-        'AMCL+GPS': (0.0, 5.0),
+        'AMCL+GNSS': (0.0, 5.0),
         'RTABMAP RGBD': (0.0, 40.0),
         'RTABMAP RGB': (0.0, 40.0),
         'ORB-SLAM3 RGBD (full)': (0.0, 20.0),

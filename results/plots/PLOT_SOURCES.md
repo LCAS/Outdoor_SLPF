@@ -24,18 +24,18 @@ Source folders used:
 Method-level trajectory inputs:
 - Experiment 1
   - `SLPF(ours)`: `results/iros_rh1/spf_lidar++/0.5/trajectory_0.5.tum`
-  - `AMCL+GPS`: `results/iros_rh1/amcl_ngps/tum1/trajectory_0.5.tum`
+  - `AMCL+NoisyGNSS`: `results/iros_rh1/amcl_ngps/tum1/trajectory_0.5.tum`
   - `RTABMAP RGBD`: `results/iros_rh1/rtabmap/rgbd/tum1/rtabmap_rgbd_filtered.tum`
-  - `Noisy GPS`: `data/2025/noisy_gps/run1/noisy_gps_seed_11.tum`
+  - `Noisy GNSS`: `data/2025/noisy_gps/run1/noisy_gps_seed_11.tum`
 - Experiment 2
   - `SLPF(ours)`: `results/iros_rh2/20260225_105822_multiseed_all_methods/slpf/seed_11/trajectory_0.5.tum`
-  - `AMCL+GPS`: `results/iros_rh2/20260225_105822_multiseed_all_methods/amcl_ngps/seed_11/trajectory_0.5.tum`
+  - `AMCL+NoisyGNSS`: `results/iros_rh2/20260225_105822_multiseed_all_methods/amcl_ngps/seed_11/trajectory_0.5.tum`
   - `RTABMAP RGBD`: `results/iros_rh2/20260225_105822_multiseed_all_methods/rtab_rgbd/seed_11/rtabmap_rgbd_filtered.tum`
-  - `Noisy GPS`: `results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_11/trajectory_0.5.tum`
+  - `Noisy GNSS`: `results/iros_rh2/20260225_105822_multiseed_all_methods/ngps/seed_11/trajectory_0.5.tum`
 
 Ground-truth pairing:
 - All methods use their sibling `gps_pose.tum` in the same method folder.
-- Exception: Experiment 1 `Noisy GPS` uses `data/2025/amcl/tum1/gps_pose.tum`.
+- Exception: Experiment 1 `Noisy GNSS` uses `data/2025/amcl/tum1/gps_pose.tum`.
 
 Map/landmark source:
 - `data/riseholme_poles_trunk.geojson`
@@ -50,14 +50,13 @@ Rendering settings for the main 2x4:
 - Row labels: `Experiment 1`, `Experiment 2` (vertical on left)
 - Method titles: shown only on the first row (second-row titles removed)
 - RTABMAP alignment: Umeyama with scaling + start anchoring
-- RTABMAP RGBD colormap range: `0-15 m`
-- Noisy GPS downsampling:
+- Shared high-error colormap range:
+  - `RTABMAP RGBD`: `0-12 m`
+  - `Noisy GNSS`: `0-12 m`
+- Noisy GNSS downsampling:
   - Experiment 1: stride `20` (from full-resolution source)
   - Experiment 2: stride `20`
-- RTK-GPS overlay: dash-dot red line on every subplot in the corresponding row
-- RTK direction markers:
-  - start marker: yellow `^`
-  - end marker: cyan `v`
+- RTK CSV inputs are loaded for consistency with the map reference frame but are not rendered on this figure
 - Start/end robot markers: enabled
 - Per-subplot legends: disabled
 - Single global legend row: enabled at top
@@ -67,6 +66,7 @@ Rendering settings for the main 2x4:
 - Tick centering: `X` and `Y` ticks are symmetric around `0`
 - Fixed plot extent: all subplots forced to `[-18, +18]` on both `X` and `Y`
 - Tick set for fixed extent: `-18, -12, -6, 0, 6, 12, 18`
+- Colorbar label: `RMSE (m)`
 - Outer padding adjustment: reduced left margin, increased right margin
 - Export crop: near-tight crop enabled (`bbox_inches='tight'`, `pad_inches=0.01`) for paper space efficiency
 - Row spacing: reduced vertical gap between row 1 and row 2 (`hspace=0.14`)

@@ -39,6 +39,9 @@ class MethodSpec:
     error_vmax: float = 10.0
 
 
+HIGH_ERROR_SHARED_VMAX = 12.0
+
+
 def resolve_path(base_dir: Path, path_like: str | Path) -> Path:
     path = Path(path_like)
     return path if path.is_absolute() else (base_dir / path)
@@ -167,7 +170,6 @@ def plot_subplot(
     ax,
     method_data: dict,
     landmark_points: dict | None,
-    rtk_xy: np.ndarray,
     show_title: bool,
     show_ylabel: bool,
 ):
@@ -181,29 +183,6 @@ def plot_subplot(
     points = traj[:, :2]
     gt_xy = gt[:, :2]
     ax.plot(gt_xy[:, 0], gt_xy[:, 1], color="gray", linestyle="--", linewidth=1.4, alpha=0.8, zorder=2)
-
-    # Explicit RTK overlay for the row (run1 on row-1, run2 on row-2).
-    ax.plot(rtk_xy[:, 0], rtk_xy[:, 1], color="tab:red", linestyle="-.", linewidth=1.5, alpha=0.9, zorder=3)
-    ax.scatter(
-        rtk_xy[0, 0],
-        rtk_xy[0, 1],
-        s=42,
-        marker="^",
-        color="#ffcc00",
-        edgecolor="black",
-        linewidth=0.6,
-        zorder=7,
-    )
-    ax.scatter(
-        rtk_xy[-1, 0],
-        rtk_xy[-1, 1],
-        s=42,
-        marker="v",
-        color="#00bcd4",
-        edgecolor="black",
-        linewidth=0.6,
-        zorder=7,
-    )
 
     if len(points) > 1:
         segments = np.array([points[i : i + 2] for i in range(len(points) - 1)])
@@ -254,7 +233,10 @@ def plot_subplot(
 
     if lc is not None:
         cbar = plt.colorbar(lc, ax=ax, fraction=0.048, pad=0.02)
-        cbar.set_label("Error (m)")
+        if spec.label in {"RTABMAP RGBD", "Noisy GNSS"}:
+            # Force explicit top tick so the colorbar upper bound is always printed.
+            cbar.set_ticks([0.0, 3.0, 6.0, 9.0, 12.0, float(spec.error_vmax)])
+        cbar.set_label("RMSE (m)")
 
 
 def build_method_specs(base_dir: Path, exp1_root: Path, exp2_root: Path) -> list[list[MethodSpec]]:
@@ -267,7 +249,7 @@ def build_method_specs(base_dir: Path, exp1_root: Path, exp2_root: Path) -> list
             error_vmax=5.0,
         ),
         MethodSpec(
-            label="AMCL+GPS",
+            label="AMCL+NoisyGNSS",
             trajectory_path=exp1_root / "amcl_ngps" / "tum1" / "trajectory_0.5.tum",
             ground_truth_path=exp1_root / "amcl_ngps" / "tum1" / "gps_pose.tum",
             error_vmin=0.0,
@@ -280,15 +262,15 @@ def build_method_specs(base_dir: Path, exp1_root: Path, exp2_root: Path) -> list
             align_umeyama_scale=True,
             anchor_start=True,
             error_vmin=0.0,
-            error_vmax=15.0,
+            error_vmax=HIGH_ERROR_SHARED_VMAX,
         ),
         MethodSpec(
-            label="Noisy GPS",
+            label="Noisy GNSS",
             trajectory_path=base_dir / "data" / "2025" / "noisy_gps" / "run1" / "noisy_gps_seed_11.tum",
             ground_truth_path=base_dir / "data" / "2025" / "amcl" / "tum1" / "gps_pose.tum",
             stride=20,
             error_vmin=0.0,
-            error_vmax=20.0,
+            error_vmax=HIGH_ERROR_SHARED_VMAX,
         ),
     ]
 
@@ -301,7 +283,7 @@ def build_method_specs(base_dir: Path, exp1_root: Path, exp2_root: Path) -> list
             error_vmax=5.0,
         ),
         MethodSpec(
-            label="AMCL+GPS",
+            label="AMCL+NoisyGNSS",
             trajectory_path=exp2_root / "amcl_ngps" / "seed_11" / "trajectory_0.5.tum",
             ground_truth_path=exp2_root / "amcl_ngps" / "seed_11" / "gps_pose.tum",
             error_vmin=0.0,
@@ -314,15 +296,15 @@ def build_method_specs(base_dir: Path, exp1_root: Path, exp2_root: Path) -> list
             align_umeyama_scale=True,
             anchor_start=True,
             error_vmin=0.0,
-            error_vmax=15.0,
+            error_vmax=HIGH_ERROR_SHARED_VMAX,
         ),
         MethodSpec(
-            label="Noisy GPS",
+            label="Noisy GNSS",
             trajectory_path=exp2_root / "ngps" / "seed_11" / "trajectory_0.5.tum",
             ground_truth_path=exp2_root / "ngps" / "seed_11" / "gps_pose.tum",
             stride=20,
             error_vmin=0.0,
-            error_vmax=20.0,
+            error_vmax=HIGH_ERROR_SHARED_VMAX,
         ),
     ]
     return [exp1, exp2]
@@ -358,8 +340,9 @@ def main() -> None:
 
     map_center_xy = compute_geojson_center_xy(geojson_path)
     landmark_points = load_landmark_points(geojson_path)
-    rtk_run1 = load_rtk_csv_as_centered_xy(run1_csv, map_center_xy)
-    rtk_run2 = load_rtk_csv_as_centered_xy(run2_csv, map_center_xy)
+    # Keep loading available for optional future overlays, not used in this figure.
+    _ = load_rtk_csv_as_centered_xy(run1_csv, map_center_xy)
+    _ = load_rtk_csv_as_centered_xy(run2_csv, map_center_xy)
 
     method_specs_by_row = build_method_specs(base_dir, exp1_root, exp2_root)
     method_data_by_row = []
@@ -372,13 +355,11 @@ def main() -> None:
     fig.subplots_adjust(left=0.065, right=0.99, top=0.90, bottom=0.08, wspace=0.16, hspace=0.14)
 
     for row_idx in range(2):
-        rtk_xy = rtk_run1 if row_idx == 0 else rtk_run2
         for col_idx in range(4):
             plot_subplot(
                 axes[row_idx, col_idx],
                 method_data_by_row[row_idx][col_idx],
                 landmark_points=landmark_points,
-                rtk_xy=rtk_xy,
                 show_title=(row_idx == 0),
                 show_ylabel=(col_idx == 0),
             )
@@ -387,28 +368,7 @@ def main() -> None:
     fig.text(0.023, 0.285, "Experiment 2", rotation=90, fontsize=18, fontweight="bold", va="center")
 
     legend_handles = [
-        Line2D([0], [0], color="gray", linestyle="--", linewidth=1.6, label="GPS ground truth"),
-        Line2D([0], [0], color="tab:red", linestyle="-.", linewidth=1.6, label="RTK-GPS ground truth"),
-        Line2D(
-            [0],
-            [0],
-            marker="^",
-            linestyle="None",
-            markerfacecolor="#ffcc00",
-            markeredgecolor="black",
-            markersize=8,
-            label="RTK start",
-        ),
-        Line2D(
-            [0],
-            [0],
-            marker="v",
-            linestyle="None",
-            markerfacecolor="#00bcd4",
-            markeredgecolor="black",
-            markersize=8,
-            label="RTK end",
-        ),
+        Line2D([0], [0], color="gray", linestyle="--", linewidth=1.6, label="GNSS ground truth"),
         Line2D(
             [0],
             [0],
@@ -456,7 +416,7 @@ def main() -> None:
         handles=legend_handles,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.985),
-        ncol=10,
+        ncol=7,
         frameon=False,
         fontsize=13,
         handlelength=2.5,
