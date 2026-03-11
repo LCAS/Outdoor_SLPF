@@ -128,4 +128,4 @@ If you use this repository, please cite the accompanying paper. A machine-readab
 
 ## License
 
-This repository is distributed under the PolyForm Noncommercial License 1.0.0. See `LICENSE.md`.
+This repository is distributed under the Apache 2.0 License. See `LICENSE.md`.
