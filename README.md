@@ -2,9 +2,9 @@
 
 Semantic landmark particle filtering for outdoor row-structured environments.
 
-This repository accompanies the paper `Semantic-Aware Particle Filter for Reliable Vineyard Robot Localisation` and packages the core SPF/SPF++ implementation, the evaluation pipeline, and the paper-facing documentation needed to understand and reproduce the published workflows.
+This repository accompanies the paper `Semantic Landmark Particle Filter for Robot Localisation in Vineyards` and packages the core SLPF implementation, the evaluation pipeline, and the paper-facing documentation needed to understand and reproduce the published workflows.
 
-Preprint: https://arxiv.org/pdf/2509.18342
+Preprint: [https://arxiv.org/pdf/2509.18342](https://arxiv.org/abs/2603.10847)
 
 ## Repository scope
 
@@ -19,7 +19,7 @@ Baseline methods such as AMCL, RTAB-Map, and ORB-SLAM3 are treated here as preco
 ## Repository layout
 
 - `data/` contains processed traverses, trajectory inputs, and semantic map artifacts
-- `models/` contains trained weights used by the SPF pipeline
+- `models/` contains trained weights used by the SLPF pipeline
 - `configs/` contains sensor and camera configuration files
 - `scripts/` contains localisation, evaluation, aggregation, and plotting code
 - `docs/` contains setup notes, methodology, and experiment protocols
@@ -38,7 +38,7 @@ bash scripts/run_evo_all.sh
 python3 scripts/aggregate_evo_results.py
 ```
 
-For the full SPF pipeline, including semantic inference and runtime profiling, see `docs/SETUP.md`.
+For the full SLPF pipeline, including semantic inference and runtime profiling, see `docs/SETUP.md`.
 
 ## Main workflows
 
@@ -60,7 +60,7 @@ python3 scripts/plot_vineyard_structure_with_rtk.py
 
 Run release-facing experiment extensions:
 
-- `scripts/run_spfpp_ablation.py` for SPF++ ablations
+- `scripts/run_spfpp_ablation.py` for SLPF ablations
 - `scripts/run_runtime_profile_experiment.py` for throughput and stage timing
 - `scripts/run_run1_robustness_experiments.py` for robustness studies
 
@@ -96,8 +96,6 @@ Experiment 2:
 | RGBD RTAB-Map | 87.17 ± 0.01 | 9.06 ± 0.00 | 1.81 ± 0.00 | 3.43 ± 0.00 | 7.25 ± 0.08 | 6.73 | 38.15 | 0.42 ± 0.00 | 18.7 ± 0.5 |
 | SLPF (ours) | 1.24 ± 0.04 | 1.11 ± 0.06 | 3.34 ± 0.02 | 6.82 ± 0.07 | 1.46 ± 0.03 | 1.31 | 4.35 | 0.67 ± 0.02 | 28.0 ± 3.3 |
 
-The ablation study and the full paper artifact bundle are prepared separately from this source-focused release commit.
-
 ## Documentation
 
 - `docs/SETUP.md` explains dependencies, expected data layout, and install variants
@@ -119,10 +117,10 @@ If you use this repository, please cite the accompanying paper. A machine-readab
 
 ```bibtex
 @article{de2025semantic,
-  title={Semantic-Aware Particle Filter for Reliable Vineyard Robot Localisation},
+  title={[Semantic-Aware Particle Filter for Reliable Vineyard Robot Localisation}](https://arxiv.org/abs/2603.10847),
   author={de Silva, Rajitha and Cox, Jonathan and Heselden, James R and Popovic, Marija and Cadena, Cesar and Polvara, Riccardo},
-  journal={arXiv preprint arXiv:2509.18342},
-  year={2025}
+  journal={arXiv preprint arXiv:2603.10847},
+  year={2026}
 }
 ```
 
